@@ -1,0 +1,9 @@
+# OS
+.DS_Store
+
+# Nix / direnv
+.direnv/
+result
+
+# Binary
+statusline
