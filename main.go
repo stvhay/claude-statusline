@@ -153,6 +153,121 @@ func cleanOldFiles(dir string, maxAge time.Duration) {
 	}
 }
 
+type RenderContext struct {
+	Input     StatusInput
+	Settings  Settings
+	UserName  string
+	HostName  string
+	HomeDir   string
+	GitInfo   string
+	LatestVer string
+	Now       time.Time
+}
+
+func renderStatusline(ctx RenderContext) string {
+	dir := normalizePath(ctx.Input.Workspace.CurrentDir)
+	projectDir := normalizePath(ctx.Input.Workspace.ProjectDir)
+
+	// Build output
+	var out strings.Builder
+	baseDir := projectDir
+	if baseDir == "" {
+		baseDir = dir
+	}
+	dirDisplay := baseDir
+	if ctx.HomeDir != "" && strings.HasPrefix(dirDisplay, ctx.HomeDir) {
+		dirDisplay = "~" + strings.TrimPrefix(dirDisplay, ctx.HomeDir)
+	}
+	if projectDir != "" && dir != projectDir {
+		relative := strings.TrimPrefix(dir, projectDir+"/")
+		if relative == dir {
+			dirDisplay += " " + yellow + "(" + filepath.Base(dir) + ")" + reset
+		} else {
+			dirDisplay += " " + yellow + "(" + relative + ")" + reset
+		}
+	}
+
+	out.WriteString(ctx.UserName + "@" + ctx.HostName + ":" + dirDisplay)
+	if ctx.GitInfo != "" {
+		out.WriteString(" " + dot + " " + ctx.GitInfo)
+	}
+
+	// Model with thinking level
+	modelDisplay := ctx.Input.Model.DisplayName
+	if ctx.Settings.AlwaysThinkingEnabled {
+		if strings.Contains(modelDisplay, "Opus") || strings.Contains(modelDisplay, "Sonnet") || strings.Contains(modelDisplay, "Claude") {
+			if ctx.Settings.EffortLevel != "" {
+				effortShort := string(unicode.ToUpper(rune(ctx.Settings.EffortLevel[0])))
+				modelDisplay += " (" + effortShort + ")"
+			} else {
+				modelDisplay += " (T)"
+			}
+		}
+	}
+
+	// Context usage
+	if ctx.Input.ContextWindow.RemainingPercentage != nil {
+		used := 100 - int(*ctx.Input.ContextWindow.RemainingPercentage)
+		usedStr := strconv.Itoa(used) + "%"
+		switch {
+		case used > 60:
+			modelDisplay += " " + red + "@ " + usedStr + reset
+		case used > 30:
+			modelDisplay += " " + yellow + "@ " + usedStr + reset
+		default:
+			modelDisplay += " @ " + usedStr
+		}
+	}
+	out.WriteString(" " + pipe + " " + modelDisplay)
+
+	// Version (only if outdated)
+	if ctx.LatestVer != "" && ctx.Input.Version != ctx.LatestVer {
+		out.WriteString(" " + dot + " " + yellow + "v" + ctx.Input.Version + reset)
+	}
+
+	// Conditional extras
+	if ctx.Input.OutputStyle.Name != "" && ctx.Input.OutputStyle.Name != "default" {
+		out.WriteString(" " + dot + " style:" + ctx.Input.OutputStyle.Name)
+	}
+	if ctx.Input.Vim != nil && ctx.Input.Vim.Mode != "" {
+		out.WriteString(" " + dot + " vim:" + ctx.Input.Vim.Mode)
+	}
+	if ctx.Input.Agent != nil && ctx.Input.Agent.Name != "" {
+		out.WriteString(" " + dot + " agent:" + ctx.Input.Agent.Name)
+	}
+	if ctx.Input.Worktree.Name != "" {
+		out.WriteString(" " + dot + " wt:" + ctx.Input.Worktree.Name)
+	} else if ctx.Input.Worktree.Branch != "" {
+		out.WriteString(" " + dot + " wt:" + ctx.Input.Worktree.Branch)
+	}
+
+	// Cost & churn
+	var costParts []string
+	if ctx.Input.Cost.TotalCostUSD != nil && *ctx.Input.Cost.TotalCostUSD != 0 {
+		costParts = append(costParts, fmt.Sprintf("$%.2f", *ctx.Input.Cost.TotalCostUSD))
+	}
+	if ctx.Input.Cost.TotalLinesAdded != 0 || ctx.Input.Cost.TotalLinesRemoved != 0 {
+		churn := green + "+" + strconv.Itoa(ctx.Input.Cost.TotalLinesAdded) + reset +
+			"/" + red + "-" + strconv.Itoa(ctx.Input.Cost.TotalLinesRemoved) + reset
+		costParts = append(costParts, churn)
+	}
+	if len(costParts) > 0 {
+		out.WriteString(" " + pipe + " " + strings.Join(costParts, " "+dot+" "))
+	}
+
+	// Time and session duration
+	timeStr := ctx.Now.Format("01/02 15:04")
+	if ctx.Input.Cost.TotalDurationMS != nil {
+		mins := int(*ctx.Input.Cost.TotalDurationMS) / 60000
+		if mins >= 1 {
+			timeStr += fmt.Sprintf(" (%dm)", mins)
+		}
+	}
+	out.WriteString(" " + pipe + " " + timeStr)
+
+	return out.String()
+}
+
 func main() {
 	data, _ := io.ReadAll(os.Stdin)
 
@@ -162,7 +277,6 @@ func main() {
 	}
 
 	dir := normalizePath(input.Workspace.CurrentDir)
-	projectDir := normalizePath(input.Workspace.ProjectDir)
 
 	// User/host (no subprocess, instant)
 	var userName, hostName string
@@ -228,102 +342,15 @@ func main() {
 		}
 	}
 
-	// Build output
-	var out strings.Builder
-	baseDir := projectDir
-	if baseDir == "" {
-		baseDir = dir
+	ctx := RenderContext{
+		Input:     input,
+		Settings:  settings,
+		UserName:  userName,
+		HostName:  hostName,
+		HomeDir:   home,
+		GitInfo:   gitInfo,
+		LatestVer: latestVer,
+		Now:       time.Now(),
 	}
-	dirDisplay := baseDir
-	if home != "" && strings.HasPrefix(dirDisplay, home) {
-		dirDisplay = "~" + strings.TrimPrefix(dirDisplay, home)
-	}
-	if projectDir != "" && dir != projectDir {
-		relative := strings.TrimPrefix(dir, projectDir+"/")
-		if relative == dir {
-			dirDisplay += " " + yellow + "(" + filepath.Base(dir) + ")" + reset
-		} else {
-			dirDisplay += " " + yellow + "(" + relative + ")" + reset
-		}
-	}
-
-	out.WriteString(userName + "@" + hostName + ":" + dirDisplay)
-	if gitInfo != "" {
-		out.WriteString(" " + dot + " " + gitInfo)
-	}
-
-	// Model with thinking level
-	modelDisplay := input.Model.DisplayName
-	if settings.AlwaysThinkingEnabled {
-		if strings.Contains(modelDisplay, "Opus") || strings.Contains(modelDisplay, "Sonnet") || strings.Contains(modelDisplay, "Claude") {
-			if settings.EffortLevel != "" {
-				effortShort := string(unicode.ToUpper(rune(settings.EffortLevel[0])))
-				modelDisplay += " (" + effortShort + ")"
-			} else {
-				modelDisplay += " (T)"
-			}
-		}
-	}
-
-	// Context usage
-	if input.ContextWindow.RemainingPercentage != nil {
-		used := 100 - int(*input.ContextWindow.RemainingPercentage)
-		usedStr := strconv.Itoa(used) + "%"
-		switch {
-		case used > 60:
-			modelDisplay += " " + red + "@ " + usedStr + reset
-		case used > 30:
-			modelDisplay += " " + yellow + "@ " + usedStr + reset
-		default:
-			modelDisplay += " @ " + usedStr
-		}
-	}
-	out.WriteString(" " + pipe + " " + modelDisplay)
-
-	// Version (only if outdated)
-	if latestVer != "" && input.Version != latestVer {
-		out.WriteString(" " + dot + " " + yellow + "v" + input.Version + reset)
-	}
-
-	// Conditional extras
-	if input.OutputStyle.Name != "" && input.OutputStyle.Name != "default" {
-		out.WriteString(" " + dot + " style:" + input.OutputStyle.Name)
-	}
-	if input.Vim != nil && input.Vim.Mode != "" {
-		out.WriteString(" " + dot + " vim:" + input.Vim.Mode)
-	}
-	if input.Agent != nil && input.Agent.Name != "" {
-		out.WriteString(" " + dot + " agent:" + input.Agent.Name)
-	}
-	if input.Worktree.Name != "" {
-		out.WriteString(" " + dot + " wt:" + input.Worktree.Name)
-	} else if input.Worktree.Branch != "" {
-		out.WriteString(" " + dot + " wt:" + input.Worktree.Branch)
-	}
-
-	// Cost & churn
-	var costParts []string
-	if input.Cost.TotalCostUSD != nil && *input.Cost.TotalCostUSD != 0 {
-		costParts = append(costParts, fmt.Sprintf("$%.2f", *input.Cost.TotalCostUSD))
-	}
-	if input.Cost.TotalLinesAdded != 0 || input.Cost.TotalLinesRemoved != 0 {
-		churn := green + "+" + strconv.Itoa(input.Cost.TotalLinesAdded) + reset +
-			"/" + red + "-" + strconv.Itoa(input.Cost.TotalLinesRemoved) + reset
-		costParts = append(costParts, churn)
-	}
-	if len(costParts) > 0 {
-		out.WriteString(" " + pipe + " " + strings.Join(costParts, " "+dot+" "))
-	}
-
-	// Time and session duration
-	timeStr := time.Now().Format("01/02 15:04")
-	if input.Cost.TotalDurationMS != nil {
-		mins := int(*input.Cost.TotalDurationMS) / 60000
-		if mins >= 1 {
-			timeStr += fmt.Sprintf(" (%dm)", mins)
-		}
-	}
-	out.WriteString(" " + pipe + " " + timeStr)
-
-	fmt.Println(out.String())
+	fmt.Println(renderStatusline(ctx))
 }
