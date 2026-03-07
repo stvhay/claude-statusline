@@ -738,6 +738,29 @@ func TestHookFeatureBranchMismatchedIssue(t *testing.T) {
 	}
 }
 
+func TestE2EHookNoIssue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	// Run --hook in the current repo (which is a git repo)
+	cmd := exec.Command(binPath, "--hook")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook failed: %v\n%s", err, out)
+	}
+	// We're on some branch — just verify it doesn't crash
+	// The output depends on branch and .issue state, which we can't control in this test
+	_ = string(out)
+}
+
 // runHook is a test helper that calls hookMain with the given branch and project dir
 func runHook(branch, projectDir string) string {
 	var buf strings.Builder
