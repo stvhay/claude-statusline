@@ -102,14 +102,11 @@ func TestRenderBasic(t *testing.T) {
 	got := renderStatusline(ctx)
 	plain := stripANSI(got)
 
-	if !strings.HasPrefix(plain, "alice@box:") {
-		t.Errorf("expected user@host prefix, got: %s", plain)
+	if !strings.HasPrefix(plain, "Opus") {
+		t.Errorf("expected model prefix, got: %s", plain)
 	}
-	if !strings.Contains(plain, "~/projects/foo") {
-		t.Errorf("expected dir in output, got: %s", plain)
-	}
-	if !strings.Contains(plain, "Opus") {
-		t.Errorf("expected model name, got: %s", plain)
+	if !strings.Contains(plain, "alice@box:~/projects/foo") {
+		t.Errorf("expected user@host:dir in output, got: %s", plain)
 	}
 	if !strings.Contains(plain, "03/06 14:30") {
 		t.Errorf("expected formatted time, got: %s", plain)
@@ -121,12 +118,12 @@ func TestRenderUserHostSuppression(t *testing.T) {
 		name       string
 		expectUser string
 		expectHost string
-		wantPrefix string
+		wantInDir  string
 	}{
-		{"both shown", "", "", "alice@box:"},
-		{"user hidden", "alice", "", "box:"},
-		{"host hidden", "", "box", "alice:"},
-		{"both hidden", "alice", "box", "/tmp"},
+		{"both shown", "", "", "alice@box:/tmp"},
+		{"user hidden", "alice", "", "box:/tmp"},
+		{"host hidden", "", "box", "alice:/tmp"},
+		{"both hidden", "alice", "box", "│ /tmp"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,8 +134,8 @@ func TestRenderUserHostSuppression(t *testing.T) {
 			ctx.ExpectHost = tt.expectHost
 
 			got := stripANSI(renderStatusline(ctx))
-			if !strings.HasPrefix(got, tt.wantPrefix) {
-				t.Errorf("expected prefix %q, got: %s", tt.wantPrefix, got)
+			if !strings.Contains(got, tt.wantInDir) {
+				t.Errorf("expected %q in output, got: %s", tt.wantInDir, got)
 			}
 		})
 	}
@@ -178,7 +175,7 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx.GitInfo = "git:feature-branch*"
 
 	got := stripANSI(renderStatusline(ctx))
-	if !strings.Contains(got, "(feature-branch*)") {
+	if !strings.Contains(got, "feature-branch*") {
 		t.Errorf("expected git info, got: %s", got)
 	}
 }
@@ -187,10 +184,10 @@ func TestRenderGitInfoWithPR(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature PR#42(open) #10,#11"
+	ctx.GitInfo = "git:feature PR #42 #10,#11"
 
 	got := stripANSI(renderStatusline(ctx))
-	if !strings.Contains(got, "PR#42(open)") {
+	if !strings.Contains(got, "PR #42") {
 		t.Errorf("expected PR info, got: %s", got)
 	}
 	if !strings.Contains(got, "#10,#11") {
@@ -207,9 +204,9 @@ func TestRenderModelThinkingLevel(t *testing.T) {
 		wantContain string
 	}{
 		{"no thinking", "Opus", false, "", "Opus"},
-		{"thinking default", "Opus", true, "", "Opus (T)"},
-		{"thinking high", "Sonnet", true, "high", "Sonnet (H)"},
-		{"thinking low", "Claude", true, "low", "Claude (L)"},
+		{"thinking default", "Opus", true, "", "Opus T"},
+		{"thinking high", "Sonnet", true, "high", "Sonnet H"},
+		{"thinking low", "Claude", true, "low", "Claude L"},
 		{"non-claude model", "GPT-4", true, "high", "GPT-4"},
 	}
 	for _, tt := range tests {
@@ -251,8 +248,12 @@ func TestRenderContextWindowColors(t *testing.T) {
 			if !strings.Contains(plain, tt.wantPct) {
 				t.Errorf("expected %q in output, got: %s", tt.wantPct, plain)
 			}
-			if tt.wantColor != "" && !strings.Contains(got, tt.wantColor+"@ "+tt.wantPct) {
-				t.Errorf("expected color %q before %q, got: %s", tt.wantColor, tt.wantPct, got)
+			// Check bar contains blocks
+			if !strings.Contains(plain, "▓") && !strings.Contains(plain, "░") {
+				t.Errorf("expected context bar with ▓ or ░, got: %s", plain)
+			}
+			if tt.wantColor != "" && !strings.Contains(got, tt.wantColor) {
+				t.Errorf("expected color %q in output, got: %s", tt.wantColor, got)
 			}
 		})
 	}
@@ -306,6 +307,9 @@ func TestRenderProjectsDirStripsPrefix(t *testing.T) {
 	got := stripANSI(renderStatusline(ctx))
 	if !strings.Contains(got, "alice@box:myapp") {
 		t.Errorf("expected stripped dir 'myapp', got: %s", got)
+	}
+	if strings.Contains(got, "/home/alice/Projects/myapp") {
+		t.Errorf("expected prefix stripped, got: %s", got)
 	}
 }
 
@@ -469,7 +473,7 @@ func TestE2E(t *testing.T) {
 	checks := []string{
 		"/tmp/test-project",
 		"Claude Opus",
-		"@ 25%",
+		"25%",
 	}
 	for _, want := range checks {
 		if !strings.Contains(plain, want) {

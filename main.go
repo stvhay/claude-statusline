@@ -17,11 +17,14 @@ import (
 
 // ANSI colors (theme-respecting base-16)
 const (
-	yellow = "\033[33m"
-	red    = "\033[31m"
-	green  = "\033[32m"
-	dim    = "\033[2m"
-	reset  = "\033[0m"
+	yellow    = "\033[33m"
+	red       = "\033[31m"
+	green     = "\033[32m"
+	cyan      = "\033[36m"
+	magenta   = "\033[35m"
+	dim       = "\033[2m"
+	underline = "\033[4m"
+	reset     = "\033[0m"
 )
 
 var (
@@ -211,10 +214,63 @@ func renderStatusline(ctx RenderContext) string {
 		}
 	}
 
-	// Git info merged into dir display as (branch*)
+	// === Section 1: Model, thinking level, context bar ===
+	modelDisplay := ctx.Input.Model.DisplayName
+	// Strip version from model name (e.g. "Opus 4.6" → "Opus")
+	for _, name := range []string{"Opus", "Sonnet", "Haiku"} {
+		if strings.HasPrefix(modelDisplay, name) {
+			modelDisplay = name
+			break
+		}
+	}
+	if ctx.Settings.AlwaysThinkingEnabled {
+		if strings.Contains(modelDisplay, "Opus") || strings.Contains(modelDisplay, "Sonnet") || strings.Contains(modelDisplay, "Claude") {
+			if ctx.Settings.EffortLevel != "" {
+				effortShort := string(unicode.ToUpper(rune(ctx.Settings.EffortLevel[0])))
+				modelDisplay += " " + effortShort
+			} else {
+				modelDisplay += " T"
+			}
+		}
+	}
+
+	if ctx.Input.ContextWindow.RemainingPercentage != nil {
+		used := 100 - int(*ctx.Input.ContextWindow.RemainingPercentage)
+		usedStr := strconv.Itoa(used) + "%"
+		// Build context bar: 4 blocks, each 25%
+		filled := (used + 12) / 25 // 0-4 filled blocks
+		if filled > 4 {
+			filled = 4
+		}
+		bar := strings.Repeat("▓", filled) + strings.Repeat("░", 4-filled)
+		var coloredBar string
+		switch {
+		case used > 75:
+			coloredBar = red + bar + " " + usedStr + reset
+		case used > 65:
+			coloredBar = yellow + bar + " " + usedStr + reset
+		default:
+			coloredBar = bar + " " + usedStr
+		}
+		modelDisplay += " " + coloredBar
+	}
+
+	// Version warning
+	if ctx.LatestVer != "" && versionLess(ctx.Input.Version, ctx.LatestVer) {
+		modelDisplay += " " + yellow + "v" + ctx.Input.Version + reset
+	}
+
+	out.WriteString(modelDisplay)
+
+	// === Section 2: Dir, git, extras, churn ===
+	// Git info merged into dir display
 	if ctx.GitInfo != "" {
 		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		dirDisplay += " (" + gitShort + ")"
+		if strings.HasPrefix(gitShort, "dirty") {
+			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
+		} else {
+			dirDisplay += " " + gitShort
+		}
 	}
 
 	// User@host: only show components that differ from expected
@@ -229,72 +285,39 @@ func renderStatusline(ctx RenderContext) string {
 	case showHost:
 		prefix = ctx.HostName + ":"
 	}
-	out.WriteString(prefix + dirDisplay)
 
-	// Model with thinking level
-	modelDisplay := ctx.Input.Model.DisplayName
-	if ctx.Settings.AlwaysThinkingEnabled {
-		if strings.Contains(modelDisplay, "Opus") || strings.Contains(modelDisplay, "Sonnet") || strings.Contains(modelDisplay, "Claude") {
-			if ctx.Settings.EffortLevel != "" {
-				effortShort := string(unicode.ToUpper(rune(ctx.Settings.EffortLevel[0])))
-				modelDisplay += " (" + effortShort + ")"
-			} else {
-				modelDisplay += " (T)"
-			}
-		}
-	}
+	dirSection := prefix + dirDisplay
 
-	// Context usage
-	if ctx.Input.ContextWindow.RemainingPercentage != nil {
-		used := 100 - int(*ctx.Input.ContextWindow.RemainingPercentage)
-		usedStr := strconv.Itoa(used) + "%"
-		switch {
-		case used > 75:
-			modelDisplay += " " + red + "@ " + usedStr + reset
-		case used > 65:
-			modelDisplay += " " + yellow + "@ " + usedStr + reset
-		default:
-			modelDisplay += " @ " + usedStr
-		}
-	}
-	out.WriteString(" " + pipe + " " + modelDisplay)
-
-	// Version (only if outdated)
-	if ctx.LatestVer != "" && versionLess(ctx.Input.Version, ctx.LatestVer) {
-		out.WriteString(" " + dot + " " + yellow + "v" + ctx.Input.Version + reset)
+	// Line churn next to dir
+	if ctx.Input.Cost.TotalLinesAdded != 0 || ctx.Input.Cost.TotalLinesRemoved != 0 {
+		churn := green + "+" + strconv.Itoa(ctx.Input.Cost.TotalLinesAdded) + reset +
+			"/" + red + "-" + strconv.Itoa(ctx.Input.Cost.TotalLinesRemoved) + reset
+		dirSection += " " + churn
 	}
 
 	// Conditional extras
 	if ctx.Input.OutputStyle.Name != "" && ctx.Input.OutputStyle.Name != "default" {
-		out.WriteString(" " + dot + " style:" + ctx.Input.OutputStyle.Name)
+		dirSection += " " + dot + " style:" + ctx.Input.OutputStyle.Name
 	}
 	if ctx.Input.Vim != nil && ctx.Input.Vim.Mode != "" {
-		out.WriteString(" " + dot + " vim:" + ctx.Input.Vim.Mode)
+		dirSection += " " + dot + " vim:" + ctx.Input.Vim.Mode
 	}
 	if ctx.Input.Agent != nil && ctx.Input.Agent.Name != "" {
-		out.WriteString(" " + dot + " agent:" + ctx.Input.Agent.Name)
+		dirSection += " " + dot + " agent:" + ctx.Input.Agent.Name
 	}
 	if ctx.Input.Worktree.Name != "" {
-		out.WriteString(" " + dot + " wt:" + ctx.Input.Worktree.Name)
+		dirSection += " " + dot + " wt:" + ctx.Input.Worktree.Name
 	} else if ctx.Input.Worktree.Branch != "" {
-		out.WriteString(" " + dot + " wt:" + ctx.Input.Worktree.Branch)
+		dirSection += " " + dot + " wt:" + ctx.Input.Worktree.Branch
 	}
 
-	// Cost & churn
-	var costParts []string
+	out.WriteString(" " + pipe + " " + dirSection)
+
+	// === Section 3: Cost · Time ===
+	var rightParts []string
 	if ctx.Input.Cost.TotalCostUSD != nil && *ctx.Input.Cost.TotalCostUSD != 0 {
-		costParts = append(costParts, fmt.Sprintf("$%.2f", *ctx.Input.Cost.TotalCostUSD))
+		rightParts = append(rightParts, fmt.Sprintf("$%.2f", *ctx.Input.Cost.TotalCostUSD))
 	}
-	if ctx.Input.Cost.TotalLinesAdded != 0 || ctx.Input.Cost.TotalLinesRemoved != 0 {
-		churn := green + "+" + strconv.Itoa(ctx.Input.Cost.TotalLinesAdded) + reset +
-			"/" + red + "-" + strconv.Itoa(ctx.Input.Cost.TotalLinesRemoved) + reset
-		costParts = append(costParts, churn)
-	}
-	if len(costParts) > 0 {
-		out.WriteString(" " + pipe + " " + strings.Join(costParts, " "+dot+" "))
-	}
-
-	// Time and session duration
 	timeStr := ctx.Now.Format("01/02 15:04")
 	if ctx.Input.Cost.TotalDurationMS != nil {
 		mins := int(*ctx.Input.Cost.TotalDurationMS) / 60000
@@ -302,7 +325,8 @@ func renderStatusline(ctx RenderContext) string {
 			timeStr += fmt.Sprintf(" (%dm)", mins)
 		}
 	}
-	out.WriteString(" " + pipe + " " + timeStr)
+	rightParts = append(rightParts, timeStr)
+	out.WriteString(" " + pipe + " " + strings.Join(rightParts, " "+dot+" "))
 
 	return out.String()
 }
@@ -363,17 +387,76 @@ func main() {
 				cleanOldFiles(prCacheDir, 7*24*time.Hour)
 				safeBranch := strings.ReplaceAll(branch, "/", "_")
 				cachePath := filepath.Join(prCacheDir, safeBranch+".json")
-				prData, _ := cachedRun(cachePath, 10*time.Second, "gh", "pr", "view", branch, "--json", "number,state,body")
+				prData, _ := cachedRun(cachePath, 10*time.Second, "gh", "pr", "view", branch, "--json", "number,state,body,url,reviewDecision,isDraft")
 				if prData != "" {
 					var pr struct {
-						Number int    `json:"number"`
-						State  string `json:"state"`
-						Body   string `json:"body"`
+						Number         int    `json:"number"`
+						State          string `json:"state"`
+						Body           string `json:"body"`
+						URL            string `json:"url"`
+						ReviewDecision string `json:"reviewDecision"`
+						IsDraft        bool   `json:"isDraft"`
 					}
 					if json.Unmarshal([]byte(prData), &pr) == nil {
-						gitInfo += fmt.Sprintf(" PR#%d(%s)", pr.Number, strings.ToLower(pr.State))
+						prLabel := fmt.Sprintf("PR/%d", pr.Number)
+						if pr.URL != "" {
+							prLabel = fmt.Sprintf("\033]8;;%s\aPR/%d\033]8;;\a", pr.URL, pr.Number)
+						}
+						// Build issue→PR display
+						repoURL := ""
+						if i := strings.LastIndex(pr.URL, "/pull/"); i >= 0 {
+							repoURL = pr.URL[:i]
+						}
+
+						issueCacheDir := filepath.Join(home, ".claude", ".issue-cache")
+						os.MkdirAll(issueCacheDir, 0755)
+						cleanOldFiles(issueCacheDir, 7*24*time.Hour)
+
+						var issueLinks []string
 						if matches := issueRe.FindAllString(pr.Body, 3); len(matches) > 0 {
-							gitInfo += " " + strings.Join(matches, ",")
+							for _, m := range matches {
+								num := strings.TrimPrefix(m, "#")
+								// Fetch issue state
+								issuePath := filepath.Join(issueCacheDir, num+".json")
+								issueData, _ := cachedRun(issuePath, 30*time.Second, "gh", "issue", "view", num, "--json", "state")
+								issueColor := green
+								if issueData != "" {
+									var issue struct {
+										State string `json:"state"`
+									}
+									if json.Unmarshal([]byte(issueData), &issue) == nil && issue.State == "CLOSED" {
+										issueColor = dim
+									}
+								}
+								if repoURL != "" {
+									issueLinks = append(issueLinks, issueColor+fmt.Sprintf("\033]8;;%s/issues/%s\a%s\033]8;;\a", repoURL, num, m)+reset)
+								} else {
+									issueLinks = append(issueLinks, issueColor+m+reset)
+								}
+							}
+						}
+
+						// PR color based on review state (matches Claude Code convention)
+						prColor := yellow // pending review (default)
+						switch {
+						case pr.IsDraft:
+							prColor = dim
+						case pr.State == "MERGED":
+							prColor = magenta
+						case pr.ReviewDecision == "APPROVED":
+							prColor = green
+						case pr.ReviewDecision == "CHANGES_REQUESTED":
+							prColor = red
+						}
+
+						dirty := ""
+						if diffOut != "" {
+							dirty = "dirty"
+						}
+						if len(issueLinks) > 0 {
+							gitInfo = "git:" + dirty + strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset
+						} else {
+							gitInfo = "git:" + dirty + prColor + prLabel + reset
 						}
 					}
 				}
