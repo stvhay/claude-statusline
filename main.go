@@ -289,8 +289,13 @@ func renderStatusline(ctx RenderContext) string {
 	isMain := gitBranch == "main" || gitBranch == "master"
 
 	// Git info merged into dir display
-	// Skip branch name on main/master when open issues will be shown (issues imply main)
-	if ctx.GitInfo != "" && !(isMain && !hasPR && len(ctx.OpenIssues) > 0) {
+	// On main with open issues: skip branch name (issues imply main) but keep dirty marker
+	isDirty := strings.Contains(ctx.GitInfo, "dirty") || strings.HasSuffix(strings.TrimPrefix(ctx.GitInfo, "git:"), "*")
+	if ctx.GitInfo != "" && isMain && !hasPR && len(ctx.OpenIssues) > 0 {
+		if isDirty {
+			dirDisplay += yellow + "*" + reset
+		}
+	} else if ctx.GitInfo != "" {
 		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
 		if strings.HasPrefix(gitShort, "dirty") {
 			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")

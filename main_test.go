@@ -520,6 +520,28 @@ func TestRenderOpenIssuesOnMain(t *testing.T) {
 	}
 }
 
+func TestRenderOpenIssuesOnMainDirty(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:main*"
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 43, URL: "https://github.com/org/repo/issues/43"},
+	}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "*") {
+		t.Errorf("expected dirty marker *, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow+"*"+reset) {
+		t.Errorf("expected yellow dirty marker, got: %s", got)
+	}
+	if strings.Contains(plain, "main") {
+		t.Errorf("should not show branch name, got: %s", plain)
+	}
+}
+
 func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
