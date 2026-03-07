@@ -317,7 +317,7 @@ func renderStatusline(ctx RenderContext) string {
 			}
 			dirDisplay += " " + strings.Join(issueStrs, " ")
 			if ctx.HasMoreIssues {
-				dirDisplay += " " + dim + "..." + reset
+				dirDisplay += " " + dim + "…" + reset
 			}
 		} else if !isMain {
 			if ctx.IssueInfo != nil {

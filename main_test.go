@@ -512,7 +512,7 @@ func TestRenderOpenIssuesOnMain(t *testing.T) {
 	if !strings.Contains(got, "#43") || !strings.Contains(got, "#42") || !strings.Contains(got, "#41") {
 		t.Errorf("expected all 3 issues, got: %s", got)
 	}
-	if !strings.Contains(got, "...") {
+	if !strings.Contains(got, "…") {
 		t.Errorf("expected ... for more issues, got: %s", got)
 	}
 	if strings.Contains(got, "main") {
@@ -556,7 +556,7 @@ func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
 	if !strings.Contains(got, "#42") {
 		t.Errorf("expected issue #42, got: %s", got)
 	}
-	if strings.Contains(got, "...") {
+	if strings.Contains(got, "…") {
 		t.Errorf("should not show ... with <=3 issues, got: %s", got)
 	}
 }
