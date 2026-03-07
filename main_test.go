@@ -173,7 +173,6 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature-branch"
 	ctx.GitBranch = "feature-branch"
 	ctx.GitDirty = true
 
@@ -191,8 +190,8 @@ func TestRenderGitInfoWithPR(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature PR #42 #10,#11"
 	ctx.GitBranch = "feature"
+	ctx.PRDisplay = "PR #42 #10,#11"
 
 	got := stripANSI(renderStatusline(ctx))
 	if !strings.Contains(got, "PR #42") {
@@ -443,7 +442,6 @@ func TestRenderIssueMatchingBranch(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature-x"
 	ctx.GitBranch = "feature-x"
 	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
 
@@ -461,7 +459,6 @@ func TestRenderIssueMismatchedBranch(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:other-branch"
 	ctx.GitBranch = "other-branch"
 	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
 
@@ -479,9 +476,8 @@ func TestRenderNoIssueNoPR(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature-x"
 	ctx.GitBranch = "feature-x"
-	// No IssueInfo, no PR in GitInfo
+	// No IssueInfo, no PR
 
 	got := renderStatusline(ctx)
 	plain := stripANSI(got)
@@ -494,8 +490,8 @@ func TestRenderPRTakesPriorityOverIssue(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:#10→PR/5"
 	ctx.GitBranch = "feature-x"
+	ctx.PRDisplay = "#10→PR/5"
 	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x"}
 
 	got := stripANSI(renderStatusline(ctx))
@@ -511,7 +507,6 @@ func TestRenderOpenIssuesOnMain(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:main"
 	ctx.GitBranch = "main"
 	ctx.OpenIssues = []OpenIssue{
 		{Number: 43, URL: "https://github.com/org/repo/issues/43"},
@@ -536,7 +531,6 @@ func TestRenderOpenIssuesOnMainDirty(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:main"
 	ctx.GitBranch = "main"
 	ctx.GitDirty = true
 	ctx.OpenIssues = []OpenIssue{
@@ -560,7 +554,6 @@ func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:main"
 	ctx.GitBranch = "main"
 	ctx.OpenIssues = []OpenIssue{
 		{Number: 42, URL: "https://github.com/org/repo/issues/42"},
@@ -580,7 +573,6 @@ func TestRenderMainBranchNoIssueHint(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:main"
 	ctx.GitBranch = "main"
 	// No OpenIssues, no IssueInfo
 

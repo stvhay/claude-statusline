@@ -90,9 +90,9 @@ type RenderContext struct {
 	ProjectsDir   string
 	ExpectUser    string
 	ExpectHost    string
-	GitInfo       string
-	GitBranch     string // parsed branch name (e.g. "main", "feature-x")
+	GitBranch     string // branch name (e.g. "main", "feature-x")
 	GitDirty      bool   // working tree has uncommitted changes
+	PRDisplay     string // formatted PR display string (empty if no PR)
 	LatestVer     string
 	Now           time.Time
 	IssueInfo     *IssueInfo
@@ -101,9 +101,9 @@ type RenderContext struct {
 }
 
 type gitResult struct {
-	info       string
 	branch     string
 	dirty      bool
+	prDisplay  string
 	issue      *IssueInfo
 	openIssues []OpenIssue
 	hasMore    bool
@@ -185,9 +185,12 @@ func versionLess(a, b string) bool {
 // so that paths from different sources compare equal after normalization.
 func normalizePath(p string) string {
 	for _, prefix := range []string{"/private/tmp", "/private/var"} {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
 		target := strings.TrimPrefix(prefix, "/private")
 		fi, err := os.Lstat(target)
-		if err == nil && fi.Mode()&os.ModeSymlink != 0 && strings.HasPrefix(p, prefix) {
+		if err == nil && fi.Mode()&os.ModeSymlink != 0 {
 			return target + strings.TrimPrefix(p, prefix)
 		}
 	}
@@ -250,11 +253,10 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 	r.branch = branch
 	diffOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-index"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff-index", "HEAD", "--")
 	r.dirty = diffOut != ""
-	r.info = "git:" + branch
 
 	if branch != "main" && branch != "master" {
-		if prInfo, ok := buildPRGitInfo(branch, dir, home, gitCacheDir); ok {
-			r.info = prInfo
+		if prDisplay, ok := buildPRGitInfo(branch, dir, home, gitCacheDir); ok {
+			r.prDisplay = prDisplay
 		} else {
 			r.issue = lookupIssueFile(projectDir, dir, gitCacheDir, home)
 		}
@@ -317,9 +319,9 @@ func buildPRGitInfo(branch, dir, home, gitCacheDir string) (string, bool) {
 	}
 
 	if len(issueLinks) > 0 {
-		return "git:" + strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset, true
+		return strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset, true
 	}
-	return "git:" + prColor + prLabel + reset, true
+	return prColor + prLabel + reset, true
 }
 
 // fetchIssueLinks resolves issue references (#N) from a PR body into colored, linked strings.
@@ -478,29 +480,31 @@ func renderStatusline(ctx RenderContext) string {
 	out.WriteString(modelDisplay)
 
 	// === Section 2: Dir, git, extras, churn ===
-	hasPR := strings.Contains(ctx.GitInfo, "PR/")
+	hasPR := ctx.PRDisplay != ""
+	hasGit := ctx.GitBranch != ""
 	isMain := ctx.GitBranch == "main" || ctx.GitBranch == "master"
 
 	// Git info merged into dir display
 	// On main with open issues: skip branch name (issues imply main) but keep dirty marker
-	if ctx.GitInfo != "" && isMain && !hasPR && len(ctx.OpenIssues) > 0 {
+	if hasGit && isMain && !hasPR && len(ctx.OpenIssues) > 0 {
 		if ctx.GitDirty {
 			dirDisplay += yellow + "*" + reset
 		}
-	} else if ctx.GitInfo != "" {
-		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		if ctx.GitDirty {
-			if hasPR {
-				dirDisplay += yellow + "*" + reset + " " + gitShort
+	} else if hasGit {
+		if hasPR {
+			if ctx.GitDirty {
+				dirDisplay += yellow + "*" + reset + " " + ctx.PRDisplay
 			} else {
-				dirDisplay += " " + gitShort + yellow + "*" + reset
+				dirDisplay += " " + ctx.PRDisplay
 			}
+		} else if ctx.GitDirty {
+			dirDisplay += " " + ctx.GitBranch + yellow + "*" + reset
 		} else {
-			dirDisplay += " " + gitShort
+			dirDisplay += " " + ctx.GitBranch
 		}
 	}
 
-	if !hasPR && ctx.GitInfo != "" {
+	if !hasPR && hasGit {
 		if isMain && len(ctx.OpenIssues) > 0 {
 			// Show open issues on main (branch name already suppressed)
 			var issueStrs []string
@@ -708,9 +712,9 @@ func main() {
 		ProjectsDir:   projectsDir,
 		ExpectUser:    os.Getenv("CLAUDE_STATUSLINE_USER"),
 		ExpectHost:    os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
-		GitInfo:       git.info,
 		GitBranch:     git.branch,
 		GitDirty:      git.dirty,
+		PRDisplay:     git.prDisplay,
 		LatestVer:     latestVer,
 		Now:           time.Now(),
 		IssueInfo:     git.issue,
