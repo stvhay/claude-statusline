@@ -175,9 +175,13 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx.Input.Model.DisplayName = "Opus"
 	ctx.GitInfo = "git:feature-branch*"
 
-	got := stripANSI(renderStatusline(ctx))
-	if !strings.Contains(got, "feature-branch*") {
-		t.Errorf("expected git info, got: %s", got)
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "feature-branch*") {
+		t.Errorf("expected git info, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow+"*"+reset) {
+		t.Errorf("expected yellow dirty marker, got: %s", got)
 	}
 }
 

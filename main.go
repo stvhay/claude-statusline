@@ -299,6 +299,8 @@ func renderStatusline(ctx RenderContext) string {
 		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
 		if strings.HasPrefix(gitShort, "dirty") {
 			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
+		} else if strings.HasSuffix(gitShort, "*") {
+			dirDisplay += " " + strings.TrimSuffix(gitShort, "*") + yellow + "*" + reset
 		} else {
 			dirDisplay += " " + gitShort
 		}
