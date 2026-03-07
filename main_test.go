@@ -173,7 +173,7 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature-branch*"
+	ctx.GitInfo = "git:feature-branch"
 	ctx.GitBranch = "feature-branch"
 	ctx.GitDirty = true
 
@@ -536,7 +536,7 @@ func TestRenderOpenIssuesOnMainDirty(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:main*"
+	ctx.GitInfo = "git:main"
 	ctx.GitBranch = "main"
 	ctx.GitDirty = true
 	ctx.OpenIssues = []OpenIssue{

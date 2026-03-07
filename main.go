@@ -250,14 +250,10 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 	r.branch = branch
 	diffOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-index"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff-index", "HEAD", "--")
 	r.dirty = diffOut != ""
-	if r.dirty {
-		r.info = "git:" + branch + "*"
-	} else {
-		r.info = "git:" + branch
-	}
+	r.info = "git:" + branch
 
 	if branch != "main" && branch != "master" {
-		if prInfo, ok := buildPRGitInfo(branch, dir, home, gitCacheDir, r.dirty); ok {
+		if prInfo, ok := buildPRGitInfo(branch, dir, home, gitCacheDir); ok {
 			r.info = prInfo
 		} else {
 			r.issue = lookupIssueFile(projectDir, dir, gitCacheDir, home)
@@ -271,7 +267,7 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 
 // buildPRGitInfo looks up PR data for a feature branch and builds the git info string.
 // Returns the formatted string and true if a PR was found.
-func buildPRGitInfo(branch, dir, home, gitCacheDir string, dirty bool) (string, bool) {
+func buildPRGitInfo(branch, dir, home, gitCacheDir string) (string, bool) {
 	prCacheDir := filepath.Join(home, ".claude", ".pr-cache")
 	os.MkdirAll(prCacheDir, 0755)
 	cleanOldFiles(prCacheDir, 7*24*time.Hour)
@@ -320,15 +316,10 @@ func buildPRGitInfo(branch, dir, home, gitCacheDir string, dirty bool) (string, 
 		prColor = red
 	}
 
-	dirtyPrefix := ""
-	if dirty {
-		dirtyPrefix = "dirty"
-	}
-
 	if len(issueLinks) > 0 {
-		return "git:" + dirtyPrefix + strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset, true
+		return "git:" + strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset, true
 	}
-	return "git:" + dirtyPrefix + prColor + prLabel + reset, true
+	return "git:" + prColor + prLabel + reset, true
 }
 
 // fetchIssueLinks resolves issue references (#N) from a PR body into colored, linked strings.
@@ -498,10 +489,12 @@ func renderStatusline(ctx RenderContext) string {
 		}
 	} else if ctx.GitInfo != "" {
 		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		if strings.HasPrefix(gitShort, "dirty") {
-			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
-		} else if ctx.GitDirty {
-			dirDisplay += " " + strings.TrimSuffix(gitShort, "*") + yellow + "*" + reset
+		if ctx.GitDirty {
+			if hasPR {
+				dirDisplay += yellow + "*" + reset + " " + gitShort
+			} else {
+				dirDisplay += " " + gitShort + yellow + "*" + reset
+			}
 		} else {
 			dirDisplay += " " + gitShort
 		}
