@@ -431,6 +431,123 @@ func TestRenderShortDurationOmitted(t *testing.T) {
 	}
 }
 
+func TestRenderIssueMatchingBranch(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:feature-x"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "#42") {
+		t.Errorf("expected issue #42, got: %s", plain)
+	}
+	if !strings.Contains(got, green) {
+		t.Errorf("expected green color for matching issue, got: %s", got)
+	}
+}
+
+func TestRenderIssueMismatchedBranch(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:other-branch"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "#42") {
+		t.Errorf("expected issue #42, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow) {
+		t.Errorf("expected yellow color for mismatched issue, got: %s", got)
+	}
+}
+
+func TestRenderNoIssueNoPR(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:feature-x"
+	// No IssueInfo, no PR in GitInfo
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "(no issue)") {
+		t.Errorf("expected '(no issue)' hint, got: %s", plain)
+	}
+}
+
+func TestRenderPRTakesPriorityOverIssue(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:#10→PR/5"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x"}
+
+	got := stripANSI(renderStatusline(ctx))
+	if strings.Contains(got, "(no issue)") {
+		t.Errorf("should not show (no issue) when PR exists, got: %s", got)
+	}
+	if !strings.Contains(got, "PR/5") {
+		t.Errorf("expected PR info preserved, got: %s", got)
+	}
+}
+
+func TestRenderOpenIssuesOnMain(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:main"
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 43, URL: "https://github.com/org/repo/issues/43"},
+		{Number: 42, URL: "https://github.com/org/repo/issues/42"},
+		{Number: 41, URL: "https://github.com/org/repo/issues/41"},
+	}
+	ctx.HasMoreIssues = true
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "#43") || !strings.Contains(got, "#42") || !strings.Contains(got, "#41") {
+		t.Errorf("expected all 3 issues, got: %s", got)
+	}
+	if !strings.Contains(got, "...") {
+		t.Errorf("expected ... for more issues, got: %s", got)
+	}
+}
+
+func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:main"
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 42, URL: "https://github.com/org/repo/issues/42"},
+	}
+	ctx.HasMoreIssues = false
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "#42") {
+		t.Errorf("expected issue #42, got: %s", got)
+	}
+	if strings.Contains(got, "...") {
+		t.Errorf("should not show ... with <=3 issues, got: %s", got)
+	}
+}
+
+func TestRenderMainBranchNoIssueHint(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitInfo = "git:main"
+	// No OpenIssues, no IssueInfo
+
+	got := stripANSI(renderStatusline(ctx))
+	if strings.Contains(got, "(no issue)") {
+		t.Errorf("should not show (no issue) on main, got: %s", got)
+	}
+}
+
 // E2E test: build the binary and pipe JSON through it
 func TestE2E(t *testing.T) {
 	if testing.Short() {

@@ -175,18 +175,32 @@ func cleanOldFiles(dir string, maxAge time.Duration) {
 	}
 }
 
+type IssueInfo struct {
+	Number  int
+	Branch  string
+	RepoURL string // e.g. "https://github.com/org/repo"
+}
+
+type OpenIssue struct {
+	Number int
+	URL    string
+}
+
 type RenderContext struct {
-	Input        StatusInput
-	Settings     Settings
-	UserName     string
-	HostName     string
-	HomeDir      string
-	ProjectsDir  string
-	ExpectUser   string
-	ExpectHost   string
-	GitInfo      string
-	LatestVer    string
-	Now          time.Time
+	Input         StatusInput
+	Settings      Settings
+	UserName      string
+	HostName      string
+	HomeDir       string
+	ProjectsDir   string
+	ExpectUser    string
+	ExpectHost    string
+	GitInfo       string
+	LatestVer     string
+	Now           time.Time
+	IssueInfo     *IssueInfo
+	OpenIssues    []OpenIssue
+	HasMoreIssues bool
 }
 
 func renderStatusline(ctx RenderContext) string {
@@ -270,6 +284,49 @@ func renderStatusline(ctx RenderContext) string {
 			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
 		} else {
 			dirDisplay += " " + gitShort
+		}
+	}
+
+	// Determine branch name from GitInfo for issue display logic
+	gitBranch := ""
+	if ctx.GitInfo != "" {
+		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
+		gitShort = strings.TrimPrefix(gitShort, "dirty")
+		gitBranch = strings.TrimRight(gitShort, "*")
+	}
+
+	hasPR := strings.Contains(ctx.GitInfo, "PR/")
+	isMain := gitBranch == "main" || gitBranch == "master"
+
+	if !hasPR && ctx.GitInfo != "" {
+		if isMain && len(ctx.OpenIssues) > 0 {
+			// Show open issues on main
+			var issueStrs []string
+			for _, oi := range ctx.OpenIssues {
+				label := fmt.Sprintf("#%d", oi.Number)
+				if oi.URL != "" {
+					label = fmt.Sprintf("\033]8;;%s\a#%d\033]8;;\a", oi.URL, oi.Number)
+				}
+				issueStrs = append(issueStrs, cyan+label+reset)
+			}
+			dirDisplay += " " + strings.Join(issueStrs, " ")
+			if ctx.HasMoreIssues {
+				dirDisplay += " " + dim + "..." + reset
+			}
+		} else if !isMain {
+			if ctx.IssueInfo != nil {
+				issueColor := green
+				if ctx.IssueInfo.Branch != gitBranch {
+					issueColor = yellow
+				}
+				label := fmt.Sprintf("#%d", ctx.IssueInfo.Number)
+				if ctx.IssueInfo.RepoURL != "" {
+					label = fmt.Sprintf("\033]8;;%s/issues/%d\a#%d\033]8;;\a", ctx.IssueInfo.RepoURL, ctx.IssueInfo.Number, ctx.IssueInfo.Number)
+				}
+				dirDisplay += " " + issueColor + label + reset
+			} else {
+				dirDisplay += " " + dim + "(no issue)" + reset
+			}
 		}
 	}
 
