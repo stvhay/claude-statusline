@@ -762,7 +762,7 @@ func TestHookFeatureBranchMismatchedIssue(t *testing.T) {
 	if msg == "" {
 		t.Errorf("expected warning when .issue mismatches")
 	}
-	if !strings.Contains(msg, "42") && !strings.Contains(msg, "old-branch") {
+	if !strings.Contains(msg, "42") || !strings.Contains(msg, "old-branch") {
 		t.Errorf("expected issue number and old branch in warning, got: %q", msg)
 	}
 }

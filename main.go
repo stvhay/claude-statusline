@@ -182,8 +182,8 @@ type IssueInfo struct {
 }
 
 type OpenIssue struct {
-	Number int
-	URL    string
+	Number int    `json:"number"`
+	URL    string `json:"url"`
 }
 
 type RenderContext struct {
@@ -639,6 +639,7 @@ func main() {
 				cleanOldFiles(issueCacheDir, 7*24*time.Hour)
 				repoKey := sanitizePath(dir)
 				issueListPath := filepath.Join(issueCacheDir, repoKey+".json")
+				// gh issue list defaults to newest-first sort; --sort flag not supported with --json
 				issueListData, _ := cachedRun(issueListPath, 30*time.Second, "gh", "issue", "list", "--limit", "4", "--json", "number,url", "--state", "open")
 				if issueListData != "" {
 					var issues []OpenIssue
