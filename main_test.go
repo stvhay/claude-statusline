@@ -269,6 +269,30 @@ func TestRenderVersionNewerThanCache(t *testing.T) {
 	}
 }
 
+func TestRenderProjectsDirStripsPrefix(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/home/alice/Projects/myapp"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.ProjectsDir = "/home/alice/Projects"
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "alice@box:myapp") {
+		t.Errorf("expected stripped dir 'myapp', got: %s", got)
+	}
+}
+
+func TestRenderProjectsDirNoMatchFallsBack(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/other"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.ProjectsDir = "/home/alice/Projects"
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "alice@box:/tmp/other") {
+		t.Errorf("expected full path when outside projects dir, got: %s", got)
+	}
+}
+
 func TestRenderOptionalExtras(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp"
@@ -423,5 +447,48 @@ func TestE2E(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Errorf("e2e output missing %q, got: %s", want, plain)
 		}
+	}
+}
+
+func TestE2EProjectsDir(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	input := StatusInput{
+		Version: "1.0.0",
+	}
+	input.Workspace.CurrentDir = "/tmp/Projects/myapp"
+	input.Workspace.ProjectDir = "/tmp/Projects/myapp"
+	input.Model.DisplayName = "Opus"
+
+	jsonData, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("json marshal: %v", err)
+	}
+
+	tmpHome := t.TempDir()
+	cmd := exec.Command(binPath)
+	cmd.Stdin = strings.NewReader(string(jsonData))
+	cmd.Env = append(os.Environ(), "HOME="+tmpHome, "CLAUDE_STATUSLINE_PROJECTS_DIR=/tmp/Projects")
+
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("binary failed: %v", err)
+	}
+
+	plain := stripANSI(strings.TrimSpace(string(out)))
+	if !strings.Contains(plain, "myapp") {
+		t.Errorf("expected stripped dir 'myapp', got: %s", plain)
+	}
+	if strings.Contains(plain, "/tmp/Projects/myapp") {
+		t.Errorf("expected projects dir prefix stripped, got: %s", plain)
 	}
 }

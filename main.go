@@ -173,14 +173,15 @@ func cleanOldFiles(dir string, maxAge time.Duration) {
 }
 
 type RenderContext struct {
-	Input     StatusInput
-	Settings  Settings
-	UserName  string
-	HostName  string
-	HomeDir   string
-	GitInfo   string
-	LatestVer string
-	Now       time.Time
+	Input       StatusInput
+	Settings    Settings
+	UserName    string
+	HostName    string
+	HomeDir     string
+	ProjectsDir string
+	GitInfo     string
+	LatestVer   string
+	Now         time.Time
 }
 
 func renderStatusline(ctx RenderContext) string {
@@ -194,7 +195,9 @@ func renderStatusline(ctx RenderContext) string {
 		baseDir = dir
 	}
 	dirDisplay := baseDir
-	if ctx.HomeDir != "" && strings.HasPrefix(dirDisplay, ctx.HomeDir) {
+	if ctx.ProjectsDir != "" && strings.HasPrefix(dirDisplay, ctx.ProjectsDir+"/") {
+		dirDisplay = strings.TrimPrefix(dirDisplay, ctx.ProjectsDir+"/")
+	} else if ctx.HomeDir != "" && strings.HasPrefix(dirDisplay, ctx.HomeDir) {
 		dirDisplay = "~" + strings.TrimPrefix(dirDisplay, ctx.HomeDir)
 	}
 	if projectDir != "" && dir != projectDir {
@@ -361,15 +364,24 @@ func main() {
 		}
 	}
 
+	projectsDir := os.Getenv("CLAUDE_STATUSLINE_PROJECTS_DIR")
+	if projectsDir != "" {
+		if strings.HasPrefix(projectsDir, "~/") {
+			projectsDir = filepath.Join(home, projectsDir[2:])
+		}
+		projectsDir = normalizePath(projectsDir)
+	}
+
 	ctx := RenderContext{
-		Input:     input,
-		Settings:  settings,
-		UserName:  userName,
-		HostName:  hostName,
-		HomeDir:   home,
-		GitInfo:   gitInfo,
-		LatestVer: latestVer,
-		Now:       time.Now(),
+		Input:       input,
+		Settings:    settings,
+		UserName:    userName,
+		HostName:    hostName,
+		HomeDir:     home,
+		ProjectsDir: projectsDir,
+		GitInfo:     gitInfo,
+		LatestVer:   latestVer,
+		Now:         time.Now(),
 	}
 	fmt.Println(renderStatusline(ctx))
 }
