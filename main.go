@@ -196,11 +196,30 @@ type RenderContext struct {
 	ExpectUser    string
 	ExpectHost    string
 	GitInfo       string
+	GitBranch     string // parsed branch name (e.g. "main", "feature-x")
+	GitDirty      bool   // working tree has uncommitted changes
 	LatestVer     string
 	Now           time.Time
 	IssueInfo     *IssueInfo
 	OpenIssues    []OpenIssue
 	HasMoreIssues bool
+}
+
+// parseIssueFile reads and parses a .issue file. Returns issue number and branch name.
+func parseIssueFile(path string) (int, string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, "", err
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(b)), ",", 2)
+	if len(parts) != 2 {
+		return 0, "", fmt.Errorf("invalid .issue format")
+	}
+	num, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid issue number: %w", err)
+	}
+	return num, parts[1], nil
 }
 
 func renderStatusline(ctx RenderContext) string {
@@ -277,29 +296,20 @@ func renderStatusline(ctx RenderContext) string {
 	out.WriteString(modelDisplay)
 
 	// === Section 2: Dir, git, extras, churn ===
-	// Determine branch name from GitInfo for issue display logic
-	gitBranch := ""
-	if ctx.GitInfo != "" {
-		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		gitShort = strings.TrimPrefix(gitShort, "dirty")
-		gitBranch = strings.TrimRight(gitShort, "*")
-	}
-
 	hasPR := strings.Contains(ctx.GitInfo, "PR/")
-	isMain := gitBranch == "main" || gitBranch == "master"
+	isMain := ctx.GitBranch == "main" || ctx.GitBranch == "master"
 
 	// Git info merged into dir display
 	// On main with open issues: skip branch name (issues imply main) but keep dirty marker
-	isDirty := strings.Contains(ctx.GitInfo, "dirty") || strings.HasSuffix(strings.TrimPrefix(ctx.GitInfo, "git:"), "*")
 	if ctx.GitInfo != "" && isMain && !hasPR && len(ctx.OpenIssues) > 0 {
-		if isDirty {
+		if ctx.GitDirty {
 			dirDisplay += yellow + "*" + reset
 		}
 	} else if ctx.GitInfo != "" {
 		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
 		if strings.HasPrefix(gitShort, "dirty") {
 			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
-		} else if strings.HasSuffix(gitShort, "*") {
+		} else if ctx.GitDirty {
 			dirDisplay += " " + strings.TrimSuffix(gitShort, "*") + yellow + "*" + reset
 		} else {
 			dirDisplay += " " + gitShort
@@ -324,7 +334,7 @@ func renderStatusline(ctx RenderContext) string {
 		} else if !isMain {
 			if ctx.IssueInfo != nil {
 				issueColor := green
-				if ctx.IssueInfo.Branch != gitBranch {
+				if ctx.IssueInfo.Branch != ctx.GitBranch {
 					issueColor = yellow
 				}
 				label := fmt.Sprintf("#%d", ctx.IssueInfo.Number)
@@ -422,27 +432,23 @@ func hookMain(branch, projectDir string, w io.Writer) {
 	}
 
 	// Feature branch: check .issue
-	issueBytes, err := os.ReadFile(issuePath)
-	if err != nil {
-		// No .issue file
+	num, issueBranch, err := parseIssueFile(issuePath)
+	if os.IsNotExist(err) {
 		fmt.Fprintf(w, "You're on branch `%s` with no linked issue. "+
 			"Which GitHub issue are you working on? "+
 			"Once confirmed, create a `.issue` file in the project root with the format: `<issue-number>,%s`\n", branch, branch)
 		return
 	}
-
-	parts := strings.SplitN(strings.TrimSpace(string(issueBytes)), ",", 2)
-	if len(parts) != 2 {
+	if err != nil {
 		fmt.Fprintf(w, "The `.issue` file has an invalid format. "+
 			"Expected `<issue-number>,%s`. Please fix or delete it.\n", branch)
 		return
 	}
 
-	issueBranch := parts[1]
 	if issueBranch != branch {
-		fmt.Fprintf(w, "The `.issue` file references issue #%s on branch `%s`, "+
-			"but you're on `%s`. Update the `.issue` file to `%s,%s` "+
-			"or create a new issue for this branch.\n", parts[0], issueBranch, branch, parts[0], branch)
+		fmt.Fprintf(w, "The `.issue` file references issue #%d on branch `%s`, "+
+			"but you're on `%s`. Update the `.issue` file to `%d,%s` "+
+			"or create a new issue for this branch.\n", num, issueBranch, branch, num, branch)
 		return
 	}
 
@@ -494,6 +500,8 @@ func main() {
 
 	var (
 		gitInfo       string
+		gitBranch     string
+		gitDirty      bool
 		settings      Settings
 		issueInfo     *IssueInfo
 		openIssues    []OpenIssue
@@ -517,8 +525,10 @@ func main() {
 	if hasGit && gitDir != "" {
 		branch, hasBranch := cachedRun(filepath.Join(gitCacheDir, "branch"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD")
 		if hasBranch && branch != "" {
+			gitBranch = branch
 			diffOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-index"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff-index", "HEAD", "--")
-			if diffOut != "" {
+			gitDirty = diffOut != ""
+			if gitDirty {
 				gitInfo = "git:" + branch + "*"
 			} else {
 				gitInfo = "git:" + branch
@@ -609,26 +619,21 @@ func main() {
 					if projectDir == "" {
 						issueFilePath = filepath.Join(dir, ".issue")
 					}
-					if issueBytes, err := os.ReadFile(issueFilePath); err == nil {
-						parts := strings.SplitN(strings.TrimSpace(string(issueBytes)), ",", 2)
-						if len(parts) == 2 {
-							if num, err := strconv.Atoi(parts[0]); err == nil {
-								issueInfo = &IssueInfo{
-									Number: num,
-									Branch: parts[1],
-								}
-								// Try to get repo URL from git remote
-								remoteCachePath := filepath.Join(gitCacheDir, "remote-url")
-								if remoteURL, ok := cachedRun(remoteCachePath, 60*time.Second, "git", "-C", dir, "--no-optional-locks", "remote", "get-url", "origin"); ok && remoteURL != "" {
-									repoURL := remoteURL
-									repoURL = strings.TrimSuffix(repoURL, ".git")
-									if strings.HasPrefix(repoURL, "git@") {
-										repoURL = strings.Replace(repoURL, ":", "/", 1)
-										repoURL = strings.Replace(repoURL, "git@", "https://", 1)
-									}
-									issueInfo.RepoURL = repoURL
-								}
+					if num, issueBranch, err := parseIssueFile(issueFilePath); err == nil {
+						issueInfo = &IssueInfo{
+							Number: num,
+							Branch: issueBranch,
+						}
+						// Try to get repo URL from git remote
+						remoteCachePath := filepath.Join(gitCacheDir, "remote-url")
+						if remoteURL, ok := cachedRun(remoteCachePath, 60*time.Second, "git", "-C", dir, "--no-optional-locks", "remote", "get-url", "origin"); ok && remoteURL != "" {
+							repoURL := remoteURL
+							repoURL = strings.TrimSuffix(repoURL, ".git")
+							if strings.HasPrefix(repoURL, "git@") {
+								repoURL = strings.Replace(repoURL, ":", "/", 1)
+								repoURL = strings.Replace(repoURL, "git@", "https://", 1)
 							}
+							issueInfo.RepoURL = repoURL
 						}
 					}
 				}
@@ -675,6 +680,8 @@ func main() {
 		ExpectUser:  os.Getenv("CLAUDE_STATUSLINE_USER"),
 		ExpectHost:  os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
 		GitInfo:       gitInfo,
+		GitBranch:     gitBranch,
+		GitDirty:      gitDirty,
 		LatestVer:     latestVer,
 		Now:           time.Now(),
 		IssueInfo:     issueInfo,
