@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -640,4 +641,42 @@ func TestE2EProjectsDir(t *testing.T) {
 	if strings.Contains(plain, "/tmp/Projects/myapp") {
 		t.Errorf("expected projects dir prefix stripped, got: %s", plain)
 	}
+}
+
+func TestE2EIssueFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	// Create a fake project dir with a .issue file
+	projectDir := t.TempDir()
+	os.WriteFile(filepath.Join(projectDir, ".issue"), []byte("42,feature-x\n"), 0644)
+
+	input := StatusInput{Version: "1.0.0"}
+	input.Workspace.CurrentDir = projectDir
+	input.Workspace.ProjectDir = projectDir
+	input.Model.DisplayName = "Opus"
+
+	jsonData, _ := json.Marshal(input)
+
+	cmd := exec.Command(binPath)
+	cmd.Stdin = strings.NewReader(string(jsonData))
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("binary failed: %v", err)
+	}
+
+	// The binary won't have git info in this temp dir, so .issue won't trigger
+	// (git check will fail). This test mainly verifies the binary doesn't crash
+	// with a .issue file present.
+	_ = stripANSI(strings.TrimSpace(string(out)))
 }

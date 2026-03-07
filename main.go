@@ -410,9 +410,14 @@ func main() {
 		hostName = h
 	}
 
+	projectDir := normalizePath(input.Workspace.ProjectDir)
+
 	var (
-		gitInfo  string
-		settings Settings
+		gitInfo       string
+		settings      Settings
+		issueInfo     *IssueInfo
+		openIssues    []OpenIssue
+		hasMoreIssues bool
 	)
 
 	// Settings (local file read, instant)
@@ -517,6 +522,56 @@ func main() {
 						}
 					}
 				}
+
+				// If no PR found, check for .issue file
+				if !strings.Contains(gitInfo, "PR/") {
+					issueFilePath := filepath.Join(projectDir, ".issue")
+					if projectDir == "" {
+						issueFilePath = filepath.Join(dir, ".issue")
+					}
+					if issueBytes, err := os.ReadFile(issueFilePath); err == nil {
+						parts := strings.SplitN(strings.TrimSpace(string(issueBytes)), ",", 2)
+						if len(parts) == 2 {
+							if num, err := strconv.Atoi(parts[0]); err == nil {
+								issueInfo = &IssueInfo{
+									Number: num,
+									Branch: parts[1],
+								}
+								// Try to get repo URL from git remote
+								remoteCachePath := filepath.Join(gitCacheDir, "remote-url")
+								if remoteURL, ok := cachedRun(remoteCachePath, 60*time.Second, "git", "-C", dir, "--no-optional-locks", "remote", "get-url", "origin"); ok && remoteURL != "" {
+									repoURL := remoteURL
+									repoURL = strings.TrimSuffix(repoURL, ".git")
+									if strings.HasPrefix(repoURL, "git@") {
+										repoURL = strings.Replace(repoURL, ":", "/", 1)
+										repoURL = strings.Replace(repoURL, "git@", "https://", 1)
+									}
+									issueInfo.RepoURL = repoURL
+								}
+							}
+						}
+					}
+				}
+			} else {
+				// On main/master: fetch open issues
+				issueCacheDir := filepath.Join(home, ".claude", ".issue-list-cache")
+				os.MkdirAll(issueCacheDir, 0755)
+				cleanOldFiles(issueCacheDir, 7*24*time.Hour)
+				repoKey := sanitizePath(dir)
+				issueListPath := filepath.Join(issueCacheDir, repoKey+".json")
+				issueListData, _ := cachedRun(issueListPath, 30*time.Second, "gh", "issue", "list", "--limit", "4", "--json", "number,url", "--state", "open", "--sort", "created")
+				if issueListData != "" {
+					var issues []OpenIssue
+					if json.Unmarshal([]byte(issueListData), &issues) == nil && len(issues) > 0 {
+						hasMore := len(issues) > 3
+						if hasMore {
+							openIssues = issues[:3]
+						} else {
+							openIssues = issues
+						}
+						hasMoreIssues = hasMore
+					}
+				}
 			}
 		}
 	}
@@ -538,9 +593,12 @@ func main() {
 		ProjectsDir: projectsDir,
 		ExpectUser:  os.Getenv("CLAUDE_STATUSLINE_USER"),
 		ExpectHost:  os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
-		GitInfo:     gitInfo,
-		LatestVer:   latestVer,
-		Now:         time.Now(),
+		GitInfo:       gitInfo,
+		LatestVer:     latestVer,
+		Now:           time.Now(),
+		IssueInfo:     issueInfo,
+		OpenIssues:    openIssues,
+		HasMoreIssues: hasMoreIssues,
 	}
 	fmt.Println(renderStatusline(ctx))
 }
