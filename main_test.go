@@ -116,6 +116,34 @@ func TestRenderBasic(t *testing.T) {
 	}
 }
 
+func TestRenderUserHostSuppression(t *testing.T) {
+	tests := []struct {
+		name       string
+		expectUser string
+		expectHost string
+		wantPrefix string
+	}{
+		{"both shown", "", "", "alice@box:"},
+		{"user hidden", "alice", "", "box:"},
+		{"host hidden", "", "box", "alice:"},
+		{"both hidden", "alice", "box", "/tmp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := baseContext()
+			ctx.Input.Workspace.CurrentDir = "/tmp"
+			ctx.Input.Model.DisplayName = "Opus"
+			ctx.ExpectUser = tt.expectUser
+			ctx.ExpectHost = tt.expectHost
+
+			got := stripANSI(renderStatusline(ctx))
+			if !strings.HasPrefix(got, tt.wantPrefix) {
+				t.Errorf("expected prefix %q, got: %s", tt.wantPrefix, got)
+			}
+		})
+	}
+}
+
 func TestRenderHomeDirShortening(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/home/alice/projects/foo"
@@ -150,7 +178,7 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx.GitInfo = "git:feature-branch*"
 
 	got := stripANSI(renderStatusline(ctx))
-	if !strings.Contains(got, "git:feature-branch*") {
+	if !strings.Contains(got, "(feature-branch*)") {
 		t.Errorf("expected git info, got: %s", got)
 	}
 }

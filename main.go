@@ -173,15 +173,17 @@ func cleanOldFiles(dir string, maxAge time.Duration) {
 }
 
 type RenderContext struct {
-	Input       StatusInput
-	Settings    Settings
-	UserName    string
-	HostName    string
-	HomeDir     string
-	ProjectsDir string
-	GitInfo     string
-	LatestVer   string
-	Now         time.Time
+	Input        StatusInput
+	Settings     Settings
+	UserName     string
+	HostName     string
+	HomeDir      string
+	ProjectsDir  string
+	ExpectUser   string
+	ExpectHost   string
+	GitInfo      string
+	LatestVer    string
+	Now          time.Time
 }
 
 func renderStatusline(ctx RenderContext) string {
@@ -209,10 +211,25 @@ func renderStatusline(ctx RenderContext) string {
 		}
 	}
 
-	out.WriteString(ctx.UserName + "@" + ctx.HostName + ":" + dirDisplay)
+	// Git info merged into dir display as (branch*)
 	if ctx.GitInfo != "" {
-		out.WriteString(" " + dot + " " + ctx.GitInfo)
+		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
+		dirDisplay += " (" + gitShort + ")"
 	}
+
+	// User@host: only show components that differ from expected
+	var prefix string
+	showUser := ctx.ExpectUser == "" || ctx.UserName != ctx.ExpectUser
+	showHost := ctx.ExpectHost == "" || ctx.HostName != ctx.ExpectHost
+	switch {
+	case showUser && showHost:
+		prefix = ctx.UserName + "@" + ctx.HostName + ":"
+	case showUser:
+		prefix = ctx.UserName + ":"
+	case showHost:
+		prefix = ctx.HostName + ":"
+	}
+	out.WriteString(prefix + dirDisplay)
 
 	// Model with thinking level
 	modelDisplay := ctx.Input.Model.DisplayName
@@ -379,6 +396,8 @@ func main() {
 		HostName:    hostName,
 		HomeDir:     home,
 		ProjectsDir: projectsDir,
+		ExpectUser:  os.Getenv("CLAUDE_STATUSLINE_USER"),
+		ExpectHost:  os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
 		GitInfo:     gitInfo,
 		LatestVer:   latestVer,
 		Now:         time.Now(),
