@@ -121,6 +121,25 @@ func cachedRun(cachePath string, ttl time.Duration, cmd string, args ...string) 
 	return "", false
 }
 
+// versionLess returns true if version a < b using numeric segment comparison.
+func versionLess(a, b string) bool {
+	as := strings.Split(strings.TrimPrefix(a, "v"), ".")
+	bs := strings.Split(strings.TrimPrefix(b, "v"), ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var ai, bi int
+		if i < len(as) {
+			ai, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			bi, _ = strconv.Atoi(bs[i])
+		}
+		if ai != bi {
+			return ai < bi
+		}
+	}
+	return false
+}
+
 // normalizePath shortens macOS /private/tmp → /tmp and /private/var → /var
 // so that paths from different sources compare equal after normalization.
 func normalizePath(p string) string {
@@ -221,7 +240,7 @@ func renderStatusline(ctx RenderContext) string {
 	out.WriteString(" " + pipe + " " + modelDisplay)
 
 	// Version (only if outdated)
-	if ctx.LatestVer != "" && ctx.Input.Version != ctx.LatestVer {
+	if ctx.LatestVer != "" && versionLess(ctx.Input.Version, ctx.LatestVer) {
 		out.WriteString(" " + dot + " " + yellow + "v" + ctx.Input.Version + reset)
 	}
 

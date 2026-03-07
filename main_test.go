@@ -256,6 +256,19 @@ func TestRenderVersionCurrent(t *testing.T) {
 	}
 }
 
+func TestRenderVersionNewerThanCache(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.Input.Version = "1.1.0"
+	ctx.LatestVer = "1.0.0"
+
+	got := stripANSI(renderStatusline(ctx))
+	if strings.Contains(got, "v1.1.0") {
+		t.Errorf("expected no version when local is newer than cache, got: %s", got)
+	}
+}
+
 func TestRenderOptionalExtras(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp"
