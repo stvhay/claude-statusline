@@ -277,16 +277,6 @@ func renderStatusline(ctx RenderContext) string {
 	out.WriteString(modelDisplay)
 
 	// === Section 2: Dir, git, extras, churn ===
-	// Git info merged into dir display
-	if ctx.GitInfo != "" {
-		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		if strings.HasPrefix(gitShort, "dirty") {
-			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
-		} else {
-			dirDisplay += " " + gitShort
-		}
-	}
-
 	// Determine branch name from GitInfo for issue display logic
 	gitBranch := ""
 	if ctx.GitInfo != "" {
@@ -298,9 +288,20 @@ func renderStatusline(ctx RenderContext) string {
 	hasPR := strings.Contains(ctx.GitInfo, "PR/")
 	isMain := gitBranch == "main" || gitBranch == "master"
 
+	// Git info merged into dir display
+	// Skip branch name on main/master when open issues will be shown (issues imply main)
+	if ctx.GitInfo != "" && !(isMain && !hasPR && len(ctx.OpenIssues) > 0) {
+		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
+		if strings.HasPrefix(gitShort, "dirty") {
+			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
+		} else {
+			dirDisplay += " " + gitShort
+		}
+	}
+
 	if !hasPR && ctx.GitInfo != "" {
 		if isMain && len(ctx.OpenIssues) > 0 {
-			// Show open issues on main
+			// Show open issues on main (branch name already suppressed)
 			var issueStrs []string
 			for _, oi := range ctx.OpenIssues {
 				label := fmt.Sprintf("#%d", oi.Number)

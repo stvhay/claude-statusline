@@ -515,6 +515,9 @@ func TestRenderOpenIssuesOnMain(t *testing.T) {
 	if !strings.Contains(got, "...") {
 		t.Errorf("expected ... for more issues, got: %s", got)
 	}
+	if strings.Contains(got, "main") {
+		t.Errorf("should not show branch name when issues are displayed, got: %s", got)
+	}
 }
 
 func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
