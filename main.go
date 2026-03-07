@@ -631,7 +631,7 @@ func main() {
 				cleanOldFiles(issueCacheDir, 7*24*time.Hour)
 				repoKey := sanitizePath(dir)
 				issueListPath := filepath.Join(issueCacheDir, repoKey+".json")
-				issueListData, _ := cachedRun(issueListPath, 30*time.Second, "gh", "issue", "list", "--limit", "4", "--json", "number,url", "--state", "open", "--sort", "created")
+				issueListData, _ := cachedRun(issueListPath, 30*time.Second, "gh", "issue", "list", "--limit", "4", "--json", "number,url", "--state", "open")
 				if issueListData != "" {
 					var issues []OpenIssue
 					if json.Unmarshal([]byte(issueListData), &issues) == nil && len(issues) > 0 {
