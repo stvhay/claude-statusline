@@ -4,7 +4,7 @@ A fast, zero-dependency Go binary that generates a rich statusline for [Claude C
 
 Reads JSON session state from stdin, outputs a single formatted line with:
 
-- `user@host:dir` with project-relative subdirectory
+- `user@host:dir` with project-relative subdirectory (user/host conditionally hidden via env vars)
 - Git branch, dirty status, and PR info (number, state, linked issues)
 - Model name with thinking level and context window usage
 - Version outdated warning
