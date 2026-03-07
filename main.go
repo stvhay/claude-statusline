@@ -17,14 +17,13 @@ import (
 
 // ANSI colors (theme-respecting base-16)
 const (
-	yellow    = "\033[33m"
-	red       = "\033[31m"
-	green     = "\033[32m"
-	cyan      = "\033[36m"
-	magenta   = "\033[35m"
-	dim       = "\033[2m"
-	underline = "\033[4m"
-	reset     = "\033[0m"
+	yellow  = "\033[33m"
+	red     = "\033[31m"
+	green   = "\033[32m"
+	cyan    = "\033[36m"
+	magenta = "\033[35m"
+	dim     = "\033[2m"
+	reset   = "\033[0m"
 )
 
 var (
@@ -69,6 +68,45 @@ type StatusInput struct {
 type Settings struct {
 	AlwaysThinkingEnabled bool   `json:"alwaysThinkingEnabled"`
 	EffortLevel           string `json:"effortLevel"`
+}
+
+type IssueInfo struct {
+	Number  int
+	Branch  string
+	RepoURL string // e.g. "https://github.com/org/repo"
+}
+
+type OpenIssue struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+}
+
+type RenderContext struct {
+	Input         StatusInput
+	Settings      Settings
+	UserName      string
+	HostName      string
+	HomeDir       string
+	ProjectsDir   string
+	ExpectUser    string
+	ExpectHost    string
+	GitBranch     string // branch name (e.g. "main", "feature-x")
+	GitDirty      bool   // working tree has uncommitted changes
+	PRDisplay     string // formatted PR display string (empty if no PR)
+	LatestVer     string
+	Now           time.Time
+	IssueInfo     *IssueInfo
+	OpenIssues    []OpenIssue
+	HasMoreIssues bool
+}
+
+type gitResult struct {
+	branch     string
+	dirty      bool
+	prDisplay  string
+	issue      *IssueInfo
+	openIssues []OpenIssue
+	hasMore    bool
 }
 
 // bgRefresh spawns a process that writes output to cachePath.
@@ -147,9 +185,12 @@ func versionLess(a, b string) bool {
 // so that paths from different sources compare equal after normalization.
 func normalizePath(p string) string {
 	for _, prefix := range []string{"/private/tmp", "/private/var"} {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
 		target := strings.TrimPrefix(prefix, "/private")
 		fi, err := os.Lstat(target)
-		if err == nil && fi.Mode()&os.ModeSymlink != 0 && strings.HasPrefix(p, prefix) {
+		if err == nil && fi.Mode()&os.ModeSymlink != 0 {
 			return target + strings.TrimPrefix(p, prefix)
 		}
 	}
@@ -175,18 +216,194 @@ func cleanOldFiles(dir string, maxAge time.Duration) {
 	}
 }
 
-type RenderContext struct {
-	Input        StatusInput
-	Settings     Settings
-	UserName     string
-	HostName     string
-	HomeDir      string
-	ProjectsDir  string
-	ExpectUser   string
-	ExpectHost   string
-	GitInfo      string
-	LatestVer    string
-	Now          time.Time
+// parseIssueFile reads and parses a .issue file. Returns issue number and branch name.
+func parseIssueFile(path string) (int, string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, "", err
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(b)), ",", 2)
+	if len(parts) != 2 {
+		return 0, "", fmt.Errorf("invalid .issue format")
+	}
+	num, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid issue number: %w", err)
+	}
+	return num, parts[1], nil
+}
+
+// gatherGitInfo collects git branch, dirty state, PR info, issue info, and open issues.
+func gatherGitInfo(dir, projectDir, home string) gitResult {
+	var r gitResult
+
+	gitCacheDir := filepath.Join(home, ".claude", ".git-cache", sanitizePath(dir))
+	os.MkdirAll(gitCacheDir, 0755)
+
+	gitDir, hasGit := cachedRun(filepath.Join(gitCacheDir, "git-dir"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--git-dir")
+	if !hasGit || gitDir == "" {
+		return r
+	}
+
+	branch, hasBranch := cachedRun(filepath.Join(gitCacheDir, "branch"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD")
+	if !hasBranch || branch == "" {
+		return r
+	}
+
+	r.branch = branch
+	diffOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-index"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff-index", "HEAD", "--")
+	r.dirty = diffOut != ""
+
+	if branch != "main" && branch != "master" {
+		if prDisplay, ok := buildPRGitInfo(branch, dir, home, gitCacheDir); ok {
+			r.prDisplay = prDisplay
+		} else {
+			r.issue = lookupIssueFile(projectDir, dir, gitCacheDir, home)
+		}
+	} else {
+		r.openIssues, r.hasMore = fetchMainIssues(dir, home)
+	}
+
+	return r
+}
+
+// buildPRGitInfo looks up PR data for a feature branch and builds the git info string.
+// Returns the formatted string and true if a PR was found.
+func buildPRGitInfo(branch, dir, home, gitCacheDir string) (string, bool) {
+	prCacheDir := filepath.Join(home, ".claude", ".pr-cache")
+	os.MkdirAll(prCacheDir, 0755)
+	cleanOldFiles(prCacheDir, 7*24*time.Hour)
+
+	safeBranch := strings.ReplaceAll(branch, "/", "_")
+	cachePath := filepath.Join(prCacheDir, safeBranch+".json")
+	prData, _ := cachedRun(cachePath, 10*time.Second, "gh", "pr", "view", branch, "--json", "number,state,body,url,reviewDecision,isDraft")
+	if prData == "" {
+		return "", false
+	}
+
+	var pr struct {
+		Number         int    `json:"number"`
+		State          string `json:"state"`
+		Body           string `json:"body"`
+		URL            string `json:"url"`
+		ReviewDecision string `json:"reviewDecision"`
+		IsDraft        bool   `json:"isDraft"`
+	}
+	if json.Unmarshal([]byte(prData), &pr) != nil {
+		return "", false
+	}
+
+	prLabel := fmt.Sprintf("PR/%d", pr.Number)
+	if pr.URL != "" {
+		prLabel = fmt.Sprintf("\033]8;;%s\aPR/%d\033]8;;\a", pr.URL, pr.Number)
+	}
+
+	repoURL := ""
+	if i := strings.LastIndex(pr.URL, "/pull/"); i >= 0 {
+		repoURL = pr.URL[:i]
+	}
+
+	issueLinks := fetchIssueLinks(pr.Body, repoURL, home)
+
+	// PR color based on review state
+	prColor := yellow // pending review (default)
+	switch {
+	case pr.IsDraft:
+		prColor = dim
+	case pr.State == "MERGED":
+		prColor = magenta
+	case pr.ReviewDecision == "APPROVED":
+		prColor = green
+	case pr.ReviewDecision == "CHANGES_REQUESTED":
+		prColor = red
+	}
+
+	if len(issueLinks) > 0 {
+		return strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset, true
+	}
+	return prColor + prLabel + reset, true
+}
+
+// fetchIssueLinks resolves issue references (#N) from a PR body into colored, linked strings.
+func fetchIssueLinks(prBody, repoURL, home string) []string {
+	matches := issueRe.FindAllString(prBody, 3)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	issueCacheDir := filepath.Join(home, ".claude", ".issue-cache")
+	os.MkdirAll(issueCacheDir, 0755)
+	cleanOldFiles(issueCacheDir, 7*24*time.Hour)
+
+	var links []string
+	for _, m := range matches {
+		num := strings.TrimPrefix(m, "#")
+		issuePath := filepath.Join(issueCacheDir, num+".json")
+		issueData, _ := cachedRun(issuePath, 30*time.Second, "gh", "issue", "view", num, "--json", "state")
+		issueColor := green
+		if issueData != "" {
+			var issue struct {
+				State string `json:"state"`
+			}
+			if json.Unmarshal([]byte(issueData), &issue) == nil && issue.State == "CLOSED" {
+				issueColor = dim
+			}
+		}
+		if repoURL != "" {
+			links = append(links, issueColor+fmt.Sprintf("\033]8;;%s/issues/%s\a%s\033]8;;\a", repoURL, num, m)+reset)
+		} else {
+			links = append(links, issueColor+m+reset)
+		}
+	}
+	return links
+}
+
+// lookupIssueFile reads the .issue file and resolves the repo URL from git remote.
+func lookupIssueFile(projectDir, dir, gitCacheDir, home string) *IssueInfo {
+	issueFilePath := filepath.Join(projectDir, ".issue")
+	if projectDir == "" {
+		issueFilePath = filepath.Join(dir, ".issue")
+	}
+	num, issueBranch, err := parseIssueFile(issueFilePath)
+	if err != nil {
+		return nil
+	}
+	info := &IssueInfo{Number: num, Branch: issueBranch}
+
+	remoteCachePath := filepath.Join(gitCacheDir, "remote-url")
+	if remoteURL, ok := cachedRun(remoteCachePath, 60*time.Second, "git", "-C", dir, "--no-optional-locks", "remote", "get-url", "origin"); ok && remoteURL != "" {
+		repoURL := strings.TrimSuffix(remoteURL, ".git")
+		if strings.HasPrefix(repoURL, "git@") {
+			repoURL = strings.Replace(repoURL, ":", "/", 1)
+			repoURL = strings.Replace(repoURL, "git@", "https://", 1)
+		}
+		info.RepoURL = repoURL
+	}
+	return info
+}
+
+// fetchMainIssues fetches open issues for display on main/master branches.
+func fetchMainIssues(dir, home string) ([]OpenIssue, bool) {
+	issueCacheDir := filepath.Join(home, ".claude", ".issue-list-cache")
+	os.MkdirAll(issueCacheDir, 0755)
+	cleanOldFiles(issueCacheDir, 7*24*time.Hour)
+
+	repoKey := sanitizePath(dir)
+	issueListPath := filepath.Join(issueCacheDir, repoKey+".json")
+	// gh issue list defaults to newest-first sort; --sort flag not supported with --json
+	issueListData, _ := cachedRun(issueListPath, 30*time.Second, "gh", "issue", "list", "--limit", "4", "--json", "number,url", "--state", "open")
+	if issueListData == "" {
+		return nil, false
+	}
+
+	var issues []OpenIssue
+	if json.Unmarshal([]byte(issueListData), &issues) != nil || len(issues) == 0 {
+		return nil, false
+	}
+	if len(issues) > 3 {
+		return issues[:3], true
+	}
+	return issues, false
 }
 
 func renderStatusline(ctx RenderContext) string {
@@ -263,13 +480,59 @@ func renderStatusline(ctx RenderContext) string {
 	out.WriteString(modelDisplay)
 
 	// === Section 2: Dir, git, extras, churn ===
+	hasPR := ctx.PRDisplay != ""
+	hasGit := ctx.GitBranch != ""
+	isMain := ctx.GitBranch == "main" || ctx.GitBranch == "master"
+
 	// Git info merged into dir display
-	if ctx.GitInfo != "" {
-		gitShort := strings.TrimPrefix(ctx.GitInfo, "git:")
-		if strings.HasPrefix(gitShort, "dirty") {
-			dirDisplay += yellow + "*" + reset + " " + strings.TrimPrefix(gitShort, "dirty")
+	// On main with open issues: skip branch name (issues imply main) but keep dirty marker
+	if hasGit && isMain && !hasPR && len(ctx.OpenIssues) > 0 {
+		if ctx.GitDirty {
+			dirDisplay += yellow + "*" + reset
+		}
+	} else if hasGit {
+		if hasPR {
+			if ctx.GitDirty {
+				dirDisplay += yellow + "*" + reset + " " + ctx.PRDisplay
+			} else {
+				dirDisplay += " " + ctx.PRDisplay
+			}
+		} else if ctx.GitDirty {
+			dirDisplay += " " + ctx.GitBranch + yellow + "*" + reset
 		} else {
-			dirDisplay += " " + gitShort
+			dirDisplay += " " + ctx.GitBranch
+		}
+	}
+
+	if !hasPR && hasGit {
+		if isMain && len(ctx.OpenIssues) > 0 {
+			// Show open issues on main (branch name already suppressed)
+			var issueStrs []string
+			for _, oi := range ctx.OpenIssues {
+				label := fmt.Sprintf("#%d", oi.Number)
+				if oi.URL != "" {
+					label = fmt.Sprintf("\033]8;;%s\a#%d\033]8;;\a", oi.URL, oi.Number)
+				}
+				issueStrs = append(issueStrs, cyan+label+reset)
+			}
+			dirDisplay += " " + strings.Join(issueStrs, " ")
+			if ctx.HasMoreIssues {
+				dirDisplay += " " + dim + "…" + reset
+			}
+		} else if !isMain {
+			if ctx.IssueInfo != nil {
+				issueColor := green
+				if ctx.IssueInfo.Branch != ctx.GitBranch {
+					issueColor = yellow
+				}
+				label := fmt.Sprintf("#%d", ctx.IssueInfo.Number)
+				if ctx.IssueInfo.RepoURL != "" {
+					label = fmt.Sprintf("\033]8;;%s/issues/%d\a#%d\033]8;;\a", ctx.IssueInfo.RepoURL, ctx.IssueInfo.Number, ctx.IssueInfo.Number)
+				}
+				dirDisplay += " " + issueColor + label + reset
+			} else {
+				dirDisplay += " " + dim + "(no issue)" + reset
+			}
 		}
 	}
 
@@ -331,7 +594,71 @@ func renderStatusline(ctx RenderContext) string {
 	return out.String()
 }
 
+// findGitRoot walks up from dir looking for a .git directory.
+func findGitRoot(dir string) string {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// hookMain implements the --hook logic. It writes output to w (stdout in production).
+// branch is the current git branch, projectDir is where .issue lives.
+func hookMain(branch, projectDir string, w io.Writer) {
+	isMain := branch == "main" || branch == "master"
+	issuePath := filepath.Join(projectDir, ".issue")
+
+	if isMain {
+		os.Remove(issuePath)
+		return
+	}
+
+	// Feature branch: check .issue
+	num, issueBranch, err := parseIssueFile(issuePath)
+	if os.IsNotExist(err) {
+		fmt.Fprintf(w, "You're on branch `%s` with no linked issue. "+
+			"Which GitHub issue are you working on? "+
+			"Once confirmed, create a `.issue` file in the project root with the format: `<issue-number>,%s`\n", branch, branch)
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(w, "The `.issue` file has an invalid format. "+
+			"Expected `<issue-number>,%s`. Please fix or delete it.\n", branch)
+		return
+	}
+
+	if issueBranch != branch {
+		fmt.Fprintf(w, "The `.issue` file references issue #%d on branch `%s`, "+
+			"but you're on `%s`. Update the `.issue` file to `%d,%s` "+
+			"or create a new issue for this branch.\n", num, issueBranch, branch, num, branch)
+		return
+	}
+
+	// Matching — no output needed
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--hook" {
+		branchBytes, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+		if err != nil {
+			return // Not in a git repo, nothing to do
+		}
+		branch := strings.TrimSpace(string(branchBytes))
+		dir, _ := os.Getwd()
+		projectDir := findGitRoot(dir)
+		if projectDir == "" {
+			return
+		}
+		hookMain(branch, projectDir, os.Stdout)
+		return
+	}
+
 	data, _ := io.ReadAll(os.Stdin)
 
 	var input StatusInput
@@ -353,13 +680,11 @@ func main() {
 		hostName = h
 	}
 
-	var (
-		gitInfo  string
-		settings Settings
-	)
+	projectDir := normalizePath(input.Workspace.ProjectDir)
+	home, _ := os.UserHomeDir()
 
 	// Settings (local file read, instant)
-	home, _ := os.UserHomeDir()
+	var settings Settings
 	if f, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err == nil {
 		json.Unmarshal(f, &settings)
 	}
@@ -368,101 +693,7 @@ func main() {
 	latestVer, _ := cachedRun(filepath.Join(home, ".claude", ".latest-version-cache"), 1*time.Hour, "npm", "view", "@anthropic-ai/claude-code", "version")
 
 	// Git info (cached, 1s TTL — avoids blocking on large repos/network mounts)
-	gitCacheDir := filepath.Join(home, ".claude", ".git-cache", sanitizePath(dir))
-	os.MkdirAll(gitCacheDir, 0755)
-
-	gitDir, hasGit := cachedRun(filepath.Join(gitCacheDir, "git-dir"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--git-dir")
-	if hasGit && gitDir != "" {
-		branch, hasBranch := cachedRun(filepath.Join(gitCacheDir, "branch"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD")
-		if hasBranch && branch != "" {
-			diffOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-index"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff-index", "HEAD", "--")
-			if diffOut != "" {
-				gitInfo = "git:" + branch + "*"
-			} else {
-				gitInfo = "git:" + branch
-			}
-			if branch != "main" && branch != "master" {
-				prCacheDir := filepath.Join(home, ".claude", ".pr-cache")
-				os.MkdirAll(prCacheDir, 0755)
-				cleanOldFiles(prCacheDir, 7*24*time.Hour)
-				safeBranch := strings.ReplaceAll(branch, "/", "_")
-				cachePath := filepath.Join(prCacheDir, safeBranch+".json")
-				prData, _ := cachedRun(cachePath, 10*time.Second, "gh", "pr", "view", branch, "--json", "number,state,body,url,reviewDecision,isDraft")
-				if prData != "" {
-					var pr struct {
-						Number         int    `json:"number"`
-						State          string `json:"state"`
-						Body           string `json:"body"`
-						URL            string `json:"url"`
-						ReviewDecision string `json:"reviewDecision"`
-						IsDraft        bool   `json:"isDraft"`
-					}
-					if json.Unmarshal([]byte(prData), &pr) == nil {
-						prLabel := fmt.Sprintf("PR/%d", pr.Number)
-						if pr.URL != "" {
-							prLabel = fmt.Sprintf("\033]8;;%s\aPR/%d\033]8;;\a", pr.URL, pr.Number)
-						}
-						// Build issue→PR display
-						repoURL := ""
-						if i := strings.LastIndex(pr.URL, "/pull/"); i >= 0 {
-							repoURL = pr.URL[:i]
-						}
-
-						issueCacheDir := filepath.Join(home, ".claude", ".issue-cache")
-						os.MkdirAll(issueCacheDir, 0755)
-						cleanOldFiles(issueCacheDir, 7*24*time.Hour)
-
-						var issueLinks []string
-						if matches := issueRe.FindAllString(pr.Body, 3); len(matches) > 0 {
-							for _, m := range matches {
-								num := strings.TrimPrefix(m, "#")
-								// Fetch issue state
-								issuePath := filepath.Join(issueCacheDir, num+".json")
-								issueData, _ := cachedRun(issuePath, 30*time.Second, "gh", "issue", "view", num, "--json", "state")
-								issueColor := green
-								if issueData != "" {
-									var issue struct {
-										State string `json:"state"`
-									}
-									if json.Unmarshal([]byte(issueData), &issue) == nil && issue.State == "CLOSED" {
-										issueColor = dim
-									}
-								}
-								if repoURL != "" {
-									issueLinks = append(issueLinks, issueColor+fmt.Sprintf("\033]8;;%s/issues/%s\a%s\033]8;;\a", repoURL, num, m)+reset)
-								} else {
-									issueLinks = append(issueLinks, issueColor+m+reset)
-								}
-							}
-						}
-
-						// PR color based on review state (matches Claude Code convention)
-						prColor := yellow // pending review (default)
-						switch {
-						case pr.IsDraft:
-							prColor = dim
-						case pr.State == "MERGED":
-							prColor = magenta
-						case pr.ReviewDecision == "APPROVED":
-							prColor = green
-						case pr.ReviewDecision == "CHANGES_REQUESTED":
-							prColor = red
-						}
-
-						dirty := ""
-						if diffOut != "" {
-							dirty = "dirty"
-						}
-						if len(issueLinks) > 0 {
-							gitInfo = "git:" + dirty + strings.Join(issueLinks, ",") + dim + "→" + reset + prColor + prLabel + reset
-						} else {
-							gitInfo = "git:" + dirty + prColor + prLabel + reset
-						}
-					}
-				}
-			}
-		}
-	}
+	git := gatherGitInfo(dir, projectDir, home)
 
 	projectsDir := os.Getenv("CLAUDE_STATUSLINE_PROJECTS_DIR")
 	if projectsDir != "" {
@@ -473,17 +704,22 @@ func main() {
 	}
 
 	ctx := RenderContext{
-		Input:       input,
-		Settings:    settings,
-		UserName:    userName,
-		HostName:    hostName,
-		HomeDir:     home,
-		ProjectsDir: projectsDir,
-		ExpectUser:  os.Getenv("CLAUDE_STATUSLINE_USER"),
-		ExpectHost:  os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
-		GitInfo:     gitInfo,
-		LatestVer:   latestVer,
-		Now:         time.Now(),
+		Input:         input,
+		Settings:      settings,
+		UserName:      userName,
+		HostName:      hostName,
+		HomeDir:       home,
+		ProjectsDir:   projectsDir,
+		ExpectUser:    os.Getenv("CLAUDE_STATUSLINE_USER"),
+		ExpectHost:    os.Getenv("CLAUDE_STATUSLINE_HOSTNAME"),
+		GitBranch:     git.branch,
+		GitDirty:      git.dirty,
+		PRDisplay:     git.prDisplay,
+		LatestVer:     latestVer,
+		Now:           time.Now(),
+		IssueInfo:     git.issue,
+		OpenIssues:    git.openIssues,
+		HasMoreIssues: git.hasMore,
 	}
 	fmt.Println(renderStatusline(ctx))
 }

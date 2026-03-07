@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -172,11 +173,16 @@ func TestRenderGitInfo(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature-branch*"
+	ctx.GitBranch = "feature-branch"
+	ctx.GitDirty = true
 
-	got := stripANSI(renderStatusline(ctx))
-	if !strings.Contains(got, "feature-branch*") {
-		t.Errorf("expected git info, got: %s", got)
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "feature-branch*") {
+		t.Errorf("expected git info, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow+"*"+reset) {
+		t.Errorf("expected yellow dirty marker, got: %s", got)
 	}
 }
 
@@ -184,7 +190,8 @@ func TestRenderGitInfoWithPR(t *testing.T) {
 	ctx := baseContext()
 	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
 	ctx.Input.Model.DisplayName = "Opus"
-	ctx.GitInfo = "git:feature PR #42 #10,#11"
+	ctx.GitBranch = "feature"
+	ctx.PRDisplay = "PR #42 #10,#11"
 
 	got := stripANSI(renderStatusline(ctx))
 	if !strings.Contains(got, "PR #42") {
@@ -431,6 +438,150 @@ func TestRenderShortDurationOmitted(t *testing.T) {
 	}
 }
 
+func TestRenderIssueMatchingBranch(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "feature-x"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "#42") {
+		t.Errorf("expected issue #42, got: %s", plain)
+	}
+	if !strings.Contains(got, green) {
+		t.Errorf("expected green color for matching issue, got: %s", got)
+	}
+}
+
+func TestRenderIssueMismatchedBranch(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "other-branch"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x", RepoURL: "https://github.com/org/repo"}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "#42") {
+		t.Errorf("expected issue #42, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow) {
+		t.Errorf("expected yellow color for mismatched issue, got: %s", got)
+	}
+}
+
+func TestRenderNoIssueNoPR(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "feature-x"
+	// No IssueInfo, no PR
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "(no issue)") {
+		t.Errorf("expected '(no issue)' hint, got: %s", plain)
+	}
+}
+
+func TestRenderPRTakesPriorityOverIssue(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "feature-x"
+	ctx.PRDisplay = "#10→PR/5"
+	ctx.IssueInfo = &IssueInfo{Number: 42, Branch: "feature-x"}
+
+	got := stripANSI(renderStatusline(ctx))
+	if strings.Contains(got, "(no issue)") {
+		t.Errorf("should not show (no issue) when PR exists, got: %s", got)
+	}
+	if !strings.Contains(got, "PR/5") {
+		t.Errorf("expected PR info preserved, got: %s", got)
+	}
+}
+
+func TestRenderOpenIssuesOnMain(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "main"
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 43, URL: "https://github.com/org/repo/issues/43"},
+		{Number: 42, URL: "https://github.com/org/repo/issues/42"},
+		{Number: 41, URL: "https://github.com/org/repo/issues/41"},
+	}
+	ctx.HasMoreIssues = true
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "#43") || !strings.Contains(got, "#42") || !strings.Contains(got, "#41") {
+		t.Errorf("expected all 3 issues, got: %s", got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("expected ... for more issues, got: %s", got)
+	}
+	if strings.Contains(got, "main") {
+		t.Errorf("should not show branch name when issues are displayed, got: %s", got)
+	}
+}
+
+func TestRenderOpenIssuesOnMainDirty(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "main"
+	ctx.GitDirty = true
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 43, URL: "https://github.com/org/repo/issues/43"},
+	}
+
+	got := renderStatusline(ctx)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "*") {
+		t.Errorf("expected dirty marker *, got: %s", plain)
+	}
+	if !strings.Contains(got, yellow+"*"+reset) {
+		t.Errorf("expected yellow dirty marker, got: %s", got)
+	}
+	if strings.Contains(plain, "main") {
+		t.Errorf("should not show branch name, got: %s", plain)
+	}
+}
+
+func TestRenderOpenIssuesOnMainNoMore(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "main"
+	ctx.OpenIssues = []OpenIssue{
+		{Number: 42, URL: "https://github.com/org/repo/issues/42"},
+	}
+	ctx.HasMoreIssues = false
+
+	got := stripANSI(renderStatusline(ctx))
+	if !strings.Contains(got, "#42") {
+		t.Errorf("expected issue #42, got: %s", got)
+	}
+	if strings.Contains(got, "…") {
+		t.Errorf("should not show ... with <=3 issues, got: %s", got)
+	}
+}
+
+func TestRenderMainBranchNoIssueHint(t *testing.T) {
+	ctx := baseContext()
+	ctx.Input.Workspace.CurrentDir = "/tmp/repo"
+	ctx.Input.Model.DisplayName = "Opus"
+	ctx.GitBranch = "main"
+	// No OpenIssues, no IssueInfo
+
+	got := stripANSI(renderStatusline(ctx))
+	if strings.Contains(got, "(no issue)") {
+		t.Errorf("should not show (no issue) on main, got: %s", got)
+	}
+}
+
 // E2E test: build the binary and pipe JSON through it
 func TestE2E(t *testing.T) {
 	if testing.Short() {
@@ -523,4 +674,142 @@ func TestE2EProjectsDir(t *testing.T) {
 	if strings.Contains(plain, "/tmp/Projects/myapp") {
 		t.Errorf("expected projects dir prefix stripped, got: %s", plain)
 	}
+}
+
+func TestE2EIssueFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	// Create a fake project dir with a .issue file
+	projectDir := t.TempDir()
+	os.WriteFile(filepath.Join(projectDir, ".issue"), []byte("42,feature-x\n"), 0644)
+
+	input := StatusInput{Version: "1.0.0"}
+	input.Workspace.CurrentDir = projectDir
+	input.Workspace.ProjectDir = projectDir
+	input.Model.DisplayName = "Opus"
+
+	jsonData, _ := json.Marshal(input)
+
+	cmd := exec.Command(binPath)
+	cmd.Stdin = strings.NewReader(string(jsonData))
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("binary failed: %v", err)
+	}
+
+	// The binary won't have git info in this temp dir, so .issue won't trigger
+	// (git check will fail). This test mainly verifies the binary doesn't crash
+	// with a .issue file present.
+	_ = stripANSI(strings.TrimSpace(string(out)))
+}
+
+func TestHookMainOnMain(t *testing.T) {
+	dir := t.TempDir()
+	// Create .issue file that should be deleted
+	issuePath := filepath.Join(dir, ".issue")
+	os.WriteFile(issuePath, []byte("42,old-branch\n"), 0644)
+
+	msg := runHook("main", dir)
+	if msg != "" {
+		t.Errorf("expected no output on main, got: %q", msg)
+	}
+	if _, err := os.Stat(issuePath); !os.IsNotExist(err) {
+		t.Errorf("expected .issue to be deleted on main")
+	}
+}
+
+func TestHookMainOnMaster(t *testing.T) {
+	dir := t.TempDir()
+	msg := runHook("master", dir)
+	if msg != "" {
+		t.Errorf("expected no output on master, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchNoIssue(t *testing.T) {
+	dir := t.TempDir()
+	msg := runHook("feature-x", dir)
+	if msg == "" {
+		t.Errorf("expected message when no .issue on feature branch")
+	}
+	if !strings.Contains(msg, "feature-x") {
+		t.Errorf("expected branch name in message, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchInvalidIssueFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".issue"), []byte("invalid\n"), 0644)
+
+	msg := runHook("feature-x", dir)
+	if msg == "" {
+		t.Errorf("expected message for invalid .issue file")
+	}
+	if !strings.Contains(msg, "invalid format") {
+		t.Errorf("expected 'invalid format' in message, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchMatchingIssue(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".issue"), []byte("42,feature-x\n"), 0644)
+
+	msg := runHook("feature-x", dir)
+	if msg != "" {
+		t.Errorf("expected no output when .issue matches, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchMismatchedIssue(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".issue"), []byte("42,old-branch\n"), 0644)
+
+	msg := runHook("feature-y", dir)
+	if msg == "" {
+		t.Errorf("expected warning when .issue mismatches")
+	}
+	if !strings.Contains(msg, "42") || !strings.Contains(msg, "old-branch") {
+		t.Errorf("expected issue number and old branch in warning, got: %q", msg)
+	}
+}
+
+func TestE2EHookNoIssue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	// Run --hook in the current repo (which is a git repo)
+	cmd := exec.Command(binPath, "--hook")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook failed: %v\n%s", err, out)
+	}
+	// We're on some branch — just verify it doesn't crash
+	// The output depends on branch and .issue state, which we can't control in this test
+	_ = string(out)
+}
+
+// runHook is a test helper that calls hookMain with the given branch and project dir
+func runHook(branch, projectDir string) string {
+	var buf strings.Builder
+	hookMain(branch, projectDir, &buf)
+	return buf.String()
 }

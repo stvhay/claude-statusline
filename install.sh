@@ -14,9 +14,14 @@ mv "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
 SETTINGS="${CLAUDE_HOME:-$HOME/.claude}/settings.json"
 COMMAND="$INSTALL_DIR/$BINARY_NAME"
 
+HOOK_COMMAND="$COMMAND --hook"
+
 if command -v jq &>/dev/null && [ -f "$SETTINGS" ]; then
   tmp=$(mktemp)
-  jq --arg cmd "$COMMAND" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+  jq --arg cmd "$COMMAND" --arg hook "$HOOK_COMMAND" '
+    .statusLine = {"type": "command", "command": $cmd} |
+    .hooks.UserPromptSubmit = [{"matcher": "", "hooks": [{"type": "command", "command": $hook}]}]
+  ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "Updated $SETTINGS"
 else
   echo "Add to ~/.claude/settings.json:"
@@ -24,6 +29,15 @@ else
   echo "  \"statusLine\": {"
   echo "    \"type\": \"command\","
   echo "    \"command\": \"$COMMAND\""
+  echo "  },"
+  echo "  \"hooks\": {"
+  echo "    \"UserPromptSubmit\": [{"
+  echo "      \"matcher\": \"\","
+  echo "      \"hooks\": [{"
+  echo "        \"type\": \"command\","
+  echo "        \"command\": \"$HOOK_COMMAND\""
+  echo "      }]"
+  echo "    }]"
   echo "  }"
 fi
 
