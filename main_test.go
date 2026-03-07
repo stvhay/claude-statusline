@@ -208,8 +208,8 @@ func TestRenderContextWindowColors(t *testing.T) {
 		wantPct   string
 	}{
 		{"low usage", 90, "", "10%"},
-		{"medium usage", 55, yellow, "45%"},
-		{"high usage", 30, red, "70%"},
+		{"medium usage", 30, yellow, "70%"},
+		{"high usage", 20, red, "80%"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

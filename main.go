@@ -232,9 +232,9 @@ func renderStatusline(ctx RenderContext) string {
 		used := 100 - int(*ctx.Input.ContextWindow.RemainingPercentage)
 		usedStr := strconv.Itoa(used) + "%"
 		switch {
-		case used > 60:
+		case used > 75:
 			modelDisplay += " " + red + "@ " + usedStr + reset
-		case used > 30:
+		case used > 65:
 			modelDisplay += " " + yellow + "@ " + usedStr + reset
 		default:
 			modelDisplay += " @ " + usedStr
