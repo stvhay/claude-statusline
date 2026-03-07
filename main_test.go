@@ -680,3 +680,67 @@ func TestE2EIssueFile(t *testing.T) {
 	// with a .issue file present.
 	_ = stripANSI(strings.TrimSpace(string(out)))
 }
+
+func TestHookMainOnMain(t *testing.T) {
+	dir := t.TempDir()
+	// Create .issue file that should be deleted
+	issuePath := filepath.Join(dir, ".issue")
+	os.WriteFile(issuePath, []byte("42,old-branch\n"), 0644)
+
+	msg := runHook("main", dir)
+	if msg != "" {
+		t.Errorf("expected no output on main, got: %q", msg)
+	}
+	if _, err := os.Stat(issuePath); !os.IsNotExist(err) {
+		t.Errorf("expected .issue to be deleted on main")
+	}
+}
+
+func TestHookMainOnMaster(t *testing.T) {
+	dir := t.TempDir()
+	msg := runHook("master", dir)
+	if msg != "" {
+		t.Errorf("expected no output on master, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchNoIssue(t *testing.T) {
+	dir := t.TempDir()
+	msg := runHook("feature-x", dir)
+	if msg == "" {
+		t.Errorf("expected message when no .issue on feature branch")
+	}
+	if !strings.Contains(msg, "feature-x") {
+		t.Errorf("expected branch name in message, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchMatchingIssue(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".issue"), []byte("42,feature-x\n"), 0644)
+
+	msg := runHook("feature-x", dir)
+	if msg != "" {
+		t.Errorf("expected no output when .issue matches, got: %q", msg)
+	}
+}
+
+func TestHookFeatureBranchMismatchedIssue(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".issue"), []byte("42,old-branch\n"), 0644)
+
+	msg := runHook("feature-y", dir)
+	if msg == "" {
+		t.Errorf("expected warning when .issue mismatches")
+	}
+	if !strings.Contains(msg, "42") && !strings.Contains(msg, "old-branch") {
+		t.Errorf("expected issue number and old branch in warning, got: %q", msg)
+	}
+}
+
+// runHook is a test helper that calls hookMain with the given branch and project dir
+func runHook(branch, projectDir string) string {
+	var buf strings.Builder
+	hookMain(branch, projectDir, &buf)
+	return buf.String()
+}

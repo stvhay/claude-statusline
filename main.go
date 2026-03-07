@@ -388,7 +388,79 @@ func renderStatusline(ctx RenderContext) string {
 	return out.String()
 }
 
+// findGitRoot walks up from dir looking for a .git directory.
+func findGitRoot(dir string) string {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// hookMain implements the --hook logic. It writes output to w (stdout in production).
+// branch is the current git branch, projectDir is where .issue lives.
+func hookMain(branch, projectDir string, w io.Writer) {
+	isMain := branch == "main" || branch == "master"
+	issuePath := filepath.Join(projectDir, ".issue")
+
+	if isMain {
+		os.Remove(issuePath)
+		return
+	}
+
+	// Feature branch: check .issue
+	issueBytes, err := os.ReadFile(issuePath)
+	if err != nil {
+		// No .issue file
+		fmt.Fprintf(w, "You're on branch `%s` with no linked issue. "+
+			"Which GitHub issue are you working on? "+
+			"Once confirmed, create a `.issue` file in the project root with the format: `<issue-number>,%s`\n", branch, branch)
+		return
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(string(issueBytes)), ",", 2)
+	if len(parts) != 2 {
+		fmt.Fprintf(w, "The `.issue` file has an invalid format. "+
+			"Expected `<issue-number>,%s`. Please fix or delete it.\n", branch)
+		return
+	}
+
+	issueBranch := parts[1]
+	if issueBranch != branch {
+		fmt.Fprintf(w, "The `.issue` file references issue #%s on branch `%s`, "+
+			"but you're on `%s`. Update the `.issue` file to `%s,%s` "+
+			"or create a new issue for this branch.\n", parts[0], issueBranch, branch, parts[0], branch)
+		return
+	}
+
+	// Matching — no output needed
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--hook" {
+		// Get current branch
+		branchBytes, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+		if err != nil {
+			return // Not in a git repo, nothing to do
+		}
+		branch := strings.TrimSpace(string(branchBytes))
+
+		// Find project root (walk up to find .git)
+		dir, _ := os.Getwd()
+		projectDir := findGitRoot(dir)
+		if projectDir == "" {
+			return
+		}
+
+		hookMain(branch, projectDir, os.Stdout)
+		return
+	}
+
 	data, _ := io.ReadAll(os.Stdin)
 
 	var input StatusInput
