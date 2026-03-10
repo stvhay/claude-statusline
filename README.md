@@ -1,5 +1,7 @@
 # claude-statusline
 
+[![Release](https://github.com/stvhay/claude-statusline/actions/workflows/release.yml/badge.svg)](https://github.com/stvhay/claude-statusline/actions/workflows/release.yml)
+
 A fast, zero-dependency Go binary that generates a rich statusline for [Claude Code](https://claude.ai/claude-code).
 
 Reads JSON session state from stdin, outputs a single formatted line with:
@@ -13,7 +15,19 @@ Reads JSON session state from stdin, outputs a single formatted line with:
 
 All expensive operations (git, `gh pr view`, `npm view`) use background-refresh caching so the statusline never blocks.
 
-## Build
+## Install
+
+Download and install the latest release (no Go toolchain required):
+
+```sh
+curl -sL https://raw.githubusercontent.com/stvhay/claude-statusline/main/install.sh | bash
+```
+
+The install script automatically detects your OS and architecture, downloads the correct binary, and configures Claude Code settings.
+
+## Build from source
+
+If you prefer to build from source or your platform isn't supported:
 
 ```sh
 go build -o statusline .
@@ -25,6 +39,8 @@ Or with nix:
 nix develop  # provides Go toolchain
 go build -o statusline .
 ```
+
+Then run `./install.sh` from the repo to configure Claude Code settings, or manually configure as described below.
 
 ## Usage
 
