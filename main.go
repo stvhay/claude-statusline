@@ -32,6 +32,8 @@ var (
 	issueRe = regexp.MustCompile(`#(\d+)`)
 )
 
+var version = "dev"
+
 type StatusInput struct {
 	Workspace struct {
 		CurrentDir string `json:"current_dir"`
@@ -644,6 +646,11 @@ func hookMain(branch, projectDir string, w io.Writer) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println("statusline " + version)
+		return
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "--hook" {
 		branchBytes, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 		if err != nil {

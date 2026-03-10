@@ -807,6 +807,33 @@ func TestE2EHookNoIssue(t *testing.T) {
 	_ = string(out)
 }
 
+func TestVersionFlag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	binPath := t.TempDir() + "/statusline"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	for _, flag := range []string{"--version", "-v"} {
+		t.Run(flag, func(t *testing.T) {
+			cmd := exec.Command(binPath, flag)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("%s failed: %v", flag, err)
+			}
+			got := strings.TrimSpace(string(out))
+			if got != "statusline dev" {
+				t.Errorf("expected 'statusline dev', got: %q", got)
+			}
+		})
+	}
+}
+
 // runHook is a test helper that calls hookMain with the given branch and project dir
 func runHook(branch, projectDir string) string {
 	var buf strings.Builder
