@@ -41,9 +41,9 @@ fi
 # Get latest version tag
 echo "Fetching latest release..."
 if command -v curl &>/dev/null; then
-  LATEST_TAG=$(curl -sI "https://github.com/$REPO/releases/latest" | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n')
+  LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
 elif command -v wget &>/dev/null; then
-  LATEST_TAG=$(wget -qS --max-redirect=0 "https://github.com/$REPO/releases/latest" 2>&1 | grep -i 'Location:' | sed 's/.*tag\///' | tr -d '\r\n')
+  LATEST_TAG=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
 else
   echo "Error: curl or wget is required"
   exit 1
@@ -60,17 +60,17 @@ ARCHIVE="statusline_${VERSION}_${OS}_${ARCH}.${EXT}"
 URL="https://github.com/$REPO/releases/download/$LATEST_TAG/$ARCHIVE"
 
 echo "Downloading $ARCHIVE..."
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 if command -v curl &>/dev/null; then
-  if ! curl -sL -o "$TMPDIR/$ARCHIVE" "$URL"; then
+  if ! curl -sfL -o "$WORK_DIR/$ARCHIVE" "$URL"; then
     echo "Download failed. Your OS/architecture ($OS/$ARCH) may not have a pre-built binary."
     echo "You can build from source instead: go build -o statusline . && mv statusline $INSTALL_DIR/$BINARY_NAME"
     exit 1
   fi
 elif command -v wget &>/dev/null; then
-  if ! wget -q -O "$TMPDIR/$ARCHIVE" "$URL"; then
+  if ! wget -q -O "$WORK_DIR/$ARCHIVE" "$URL"; then
     echo "Download failed. Your OS/architecture ($OS/$ARCH) may not have a pre-built binary."
     echo "You can build from source instead: go build -o statusline . && mv statusline $INSTALL_DIR/$BINARY_NAME"
     exit 1
@@ -81,16 +81,16 @@ fi
 echo "Installing to $INSTALL_DIR/$BINARY_NAME"
 mkdir -p "$INSTALL_DIR"
 if [ "$EXT" = "zip" ]; then
-  unzip -o -q "$TMPDIR/$ARCHIVE" -d "$TMPDIR/extract"
+  unzip -o -q "$WORK_DIR/$ARCHIVE" -d "$WORK_DIR/extract"
 else
-  mkdir -p "$TMPDIR/extract"
-  tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR/extract"
+  mkdir -p "$WORK_DIR/extract"
+  tar -xzf "$WORK_DIR/$ARCHIVE" -C "$WORK_DIR/extract"
 fi
 
 # Find and install the binary
-EXTRACTED_BIN="$TMPDIR/extract/statusline"
+EXTRACTED_BIN="$WORK_DIR/extract/statusline"
 if [ "$OS" = "windows" ]; then
-  EXTRACTED_BIN="$TMPDIR/extract/statusline.exe"
+  EXTRACTED_BIN="$WORK_DIR/extract/statusline.exe"
 fi
 
 if [ ! -f "$EXTRACTED_BIN" ]; then
