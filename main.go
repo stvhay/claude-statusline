@@ -112,6 +112,25 @@ type gitResult struct {
 	hasMore    bool
 }
 
+// parseNumstat sums added/removed lines from git diff --numstat output.
+// Skips binary entries (shown as "-\t-\tfilename").
+func parseNumstat(output string) (added, removed int) {
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		a, errA := strconv.Atoi(parts[0])
+		r, errR := strconv.Atoi(parts[1])
+		if errA != nil || errR != nil {
+			continue // binary file or malformed line
+		}
+		added += a
+		removed += r
+	}
+	return
+}
+
 // bgRefresh spawns a process that writes output to cachePath.
 // Uses O_CREATE|O_EXCL lock file to prevent duplicate concurrent fetches.
 // The child process survives after this Go process exits.

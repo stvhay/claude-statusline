@@ -929,6 +929,31 @@ func TestWriteStatsFileCreatesClaudeDir(t *testing.T) {
 	}
 }
 
+func TestParseNumstat(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantAdded   int
+		wantRemoved int
+	}{
+		{"empty", "", 0, 0},
+		{"single file", "10\t5\tsrc/main.go", 10, 5},
+		{"multiple files", "10\t5\tsrc/main.go\n3\t1\tREADME.md", 13, 6},
+		{"binary file skipped", "10\t5\tsrc/main.go\n-\t-\timage.png", 10, 5},
+		{"only binary", "-\t-\timage.png", 0, 0},
+		{"trailing newline", "10\t5\tsrc/main.go\n", 10, 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			added, removed := parseNumstat(tt.input)
+			if added != tt.wantAdded || removed != tt.wantRemoved {
+				t.Errorf("parseNumstat(%q) = (%d, %d), want (%d, %d)",
+					tt.input, added, removed, tt.wantAdded, tt.wantRemoved)
+			}
+		})
+	}
+}
+
 // runHook is a test helper that calls hookMain with the given branch and project dir
 func runHook(branch, projectDir string) string {
 	var buf strings.Builder
