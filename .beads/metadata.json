@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "claude_statusline",
+  "project_id": "97748a8f-6544-4da1-add3-e82a81566740"
+}
