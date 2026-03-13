@@ -99,17 +99,21 @@ type RenderContext struct {
 	LatestVer     string
 	Now           time.Time
 	IssueInfo     *IssueInfo
-	OpenIssues    []OpenIssue
-	HasMoreIssues bool
+	OpenIssues      []OpenIssue
+	HasMoreIssues   bool
+	GitLinesAdded   int
+	GitLinesRemoved int
 }
 
 type gitResult struct {
-	branch     string
-	dirty      bool
-	prDisplay  string
-	issue      *IssueInfo
-	openIssues []OpenIssue
-	hasMore    bool
+	branch       string
+	dirty        bool
+	prDisplay    string
+	issue        *IssueInfo
+	openIssues   []OpenIssue
+	hasMore      bool
+	linesAdded   int
+	linesRemoved int
 }
 
 // parseNumstat sums added/removed lines from git diff --numstat output.
@@ -285,6 +289,10 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 	} else {
 		r.openIssues, r.hasMore = fetchMainIssues(dir, home)
 	}
+
+	// Git diff stats: lines added/removed vs main
+	numstatOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-numstat"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff", "--numstat", "main...")
+	r.linesAdded, r.linesRemoved = parseNumstat(numstatOut)
 
 	return r
 }
@@ -573,10 +581,10 @@ func renderStatusline(ctx RenderContext) string {
 
 	dirSection := prefix + dirDisplay
 
-	// Line churn next to dir
-	if ctx.Input.Cost.TotalLinesAdded != 0 || ctx.Input.Cost.TotalLinesRemoved != 0 {
-		churn := green + "+" + strconv.Itoa(ctx.Input.Cost.TotalLinesAdded) + reset +
-			"/" + red + "-" + strconv.Itoa(ctx.Input.Cost.TotalLinesRemoved) + reset
+	// Line churn next to dir (git-based)
+	if ctx.GitLinesAdded != 0 || ctx.GitLinesRemoved != 0 {
+		churn := green + "+" + strconv.Itoa(ctx.GitLinesAdded) + reset +
+			"/" + red + "-" + strconv.Itoa(ctx.GitLinesRemoved) + reset
 		dirSection += " " + churn
 	}
 
@@ -776,7 +784,9 @@ func main() {
 		Now:           time.Now(),
 		IssueInfo:     git.issue,
 		OpenIssues:    git.openIssues,
-		HasMoreIssues: git.hasMore,
+		HasMoreIssues:   git.hasMore,
+		GitLinesAdded:   git.linesAdded,
+		GitLinesRemoved: git.linesRemoved,
 	}
 	fmt.Println(renderStatusline(ctx))
 	writeStatsFile(projectDir, input)

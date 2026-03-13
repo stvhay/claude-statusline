@@ -382,8 +382,8 @@ func TestRenderCostAndChurn(t *testing.T) {
 	ctx.Input.Workspace.CurrentDir = "/tmp"
 	ctx.Input.Model.DisplayName = "Opus"
 	ctx.Input.Cost.TotalCostUSD = floatPtr(1.50)
-	ctx.Input.Cost.TotalLinesAdded = 42
-	ctx.Input.Cost.TotalLinesRemoved = 7
+	ctx.GitLinesAdded = 42
+	ctx.GitLinesRemoved = 7
 
 	got := renderStatusline(ctx)
 	plain := stripANSI(got)
