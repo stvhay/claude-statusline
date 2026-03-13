@@ -289,14 +289,15 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 	}
 
 	// Git diff stats: lines added/removed vs default branch
-	base := "main"
-	if branch == "main" || branch == "master" {
-		base = "HEAD"
-	} else {
-		// Check if master is the default branch (main ref doesn't exist)
-		if _, ok := cachedRun(filepath.Join(gitCacheDir, "has-main"), 5*time.Minute, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--verify", "main"); !ok {
-			base = "master"
+	// Detect default branch from origin/HEAD (set on clone, no network call)
+	base := "main" // fallback
+	if defRef, ok := cachedRun(filepath.Join(gitCacheDir, "default-branch"), 5*time.Minute, "git", "-C", dir, "--no-optional-locks", "symbolic-ref", "refs/remotes/origin/HEAD"); ok {
+		if i := strings.LastIndex(defRef, "/"); i >= 0 {
+			base = defRef[i+1:]
 		}
+	}
+	if branch == base {
+		base = "HEAD"
 	}
 	numstatOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-numstat"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff", "--numstat", base+"...")
 	r.linesAdded, r.linesRemoved = parseNumstat(numstatOut)
