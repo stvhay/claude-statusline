@@ -10,3 +10,6 @@ statusline
 
 # Issue tracking
 .issue
+
+# Worktrees
+.worktrees/
