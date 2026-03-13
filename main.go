@@ -57,10 +57,8 @@ type StatusInput struct {
 		Name string `json:"name"`
 	} `json:"agent"`
 	Cost struct {
-		TotalCostUSD      *float64 `json:"total_cost_usd"`
-		TotalDurationMS   *float64 `json:"total_duration_ms"`
-		TotalLinesAdded   int      `json:"total_lines_added"`
-		TotalLinesRemoved int      `json:"total_lines_removed"`
+		TotalCostUSD    *float64 `json:"total_cost_usd"`
+		TotalDurationMS *float64 `json:"total_duration_ms"`
 	} `json:"cost"`
 	Worktree struct {
 		Name   string `json:"worktree_name"`
@@ -290,8 +288,17 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 		r.openIssues, r.hasMore = fetchMainIssues(dir, home)
 	}
 
-	// Git diff stats: lines added/removed vs main
-	numstatOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-numstat"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff", "--numstat", "main...")
+	// Git diff stats: lines added/removed vs default branch
+	base := "main"
+	if branch == "main" || branch == "master" {
+		base = "HEAD"
+	} else {
+		// Check if master is the default branch (main ref doesn't exist)
+		if _, ok := cachedRun(filepath.Join(gitCacheDir, "has-main"), 5*time.Minute, "git", "-C", dir, "--no-optional-locks", "rev-parse", "--verify", "main"); !ok {
+			base = "master"
+		}
+	}
+	numstatOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-numstat"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff", "--numstat", base+"...")
 	r.linesAdded, r.linesRemoved = parseNumstat(numstatOut)
 
 	return r
