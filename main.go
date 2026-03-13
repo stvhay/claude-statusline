@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/user"
@@ -653,9 +654,11 @@ func writeStatsFile(projectDir string, input StatusInput) {
 	}
 
 	claudeDir := filepath.Join(projectDir, ".claude")
-	os.MkdirAll(claudeDir, 0755)
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return
+	}
 
-	used := 100 - int(*input.ContextWindow.RemainingPercentage)
+	used := 100 - int(math.Round(*input.ContextWindow.RemainingPercentage))
 	var buf strings.Builder
 	fmt.Fprintf(&buf, "context_percent=%d\n", used)
 
@@ -668,7 +671,9 @@ func writeStatsFile(projectDir string, input StatusInput) {
 	if err := os.WriteFile(tmpPath, []byte(buf.String()), 0644); err != nil {
 		return
 	}
-	os.Rename(tmpPath, statsPath)
+	if err := os.Rename(tmpPath, statsPath); err != nil {
+		os.Remove(tmpPath)
+	}
 }
 
 func main() {
