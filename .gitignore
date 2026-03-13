@@ -3,6 +3,7 @@
 
 # Nix / direnv
 .direnv/
+.envrc.local.d/
 result
 
 # Binary
@@ -10,6 +11,9 @@ statusline
 
 # Issue tracking
 .issue
+
+# Claude Code
+.claude/
 
 # Worktrees
 .worktrees/
