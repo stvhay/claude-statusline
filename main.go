@@ -57,10 +57,8 @@ type StatusInput struct {
 		Name string `json:"name"`
 	} `json:"agent"`
 	Cost struct {
-		TotalCostUSD      *float64 `json:"total_cost_usd"`
-		TotalDurationMS   *float64 `json:"total_duration_ms"`
-		TotalLinesAdded   int      `json:"total_lines_added"`
-		TotalLinesRemoved int      `json:"total_lines_removed"`
+		TotalCostUSD    *float64 `json:"total_cost_usd"`
+		TotalDurationMS *float64 `json:"total_duration_ms"`
 	} `json:"cost"`
 	Worktree struct {
 		Name   string `json:"worktree_name"`
@@ -99,17 +97,40 @@ type RenderContext struct {
 	LatestVer     string
 	Now           time.Time
 	IssueInfo     *IssueInfo
-	OpenIssues    []OpenIssue
-	HasMoreIssues bool
+	OpenIssues      []OpenIssue
+	HasMoreIssues   bool
+	GitLinesAdded   int
+	GitLinesRemoved int
 }
 
 type gitResult struct {
-	branch     string
-	dirty      bool
-	prDisplay  string
-	issue      *IssueInfo
-	openIssues []OpenIssue
-	hasMore    bool
+	branch       string
+	dirty        bool
+	prDisplay    string
+	issue        *IssueInfo
+	openIssues   []OpenIssue
+	hasMore      bool
+	linesAdded   int
+	linesRemoved int
+}
+
+// parseNumstat sums added/removed lines from git diff --numstat output.
+// Skips binary entries (shown as "-\t-\tfilename").
+func parseNumstat(output string) (added, removed int) {
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		a, errA := strconv.Atoi(parts[0])
+		r, errR := strconv.Atoi(parts[1])
+		if errA != nil || errR != nil {
+			continue // binary file or malformed line
+		}
+		added += a
+		removed += r
+	}
+	return
 }
 
 // bgRefresh spawns a process that writes output to cachePath.
@@ -266,6 +287,20 @@ func gatherGitInfo(dir, projectDir, home string) gitResult {
 	} else {
 		r.openIssues, r.hasMore = fetchMainIssues(dir, home)
 	}
+
+	// Git diff stats: lines added/removed vs default branch
+	// Detect default branch from origin/HEAD (set on clone, no network call)
+	base := "main" // fallback
+	if defRef, ok := cachedRun(filepath.Join(gitCacheDir, "default-branch"), 5*time.Minute, "git", "-C", dir, "--no-optional-locks", "symbolic-ref", "refs/remotes/origin/HEAD"); ok {
+		if i := strings.LastIndex(defRef, "/"); i >= 0 {
+			base = defRef[i+1:]
+		}
+	}
+	if branch == base {
+		base = "HEAD"
+	}
+	numstatOut, _ := cachedRun(filepath.Join(gitCacheDir, "diff-numstat"), 1*time.Second, "git", "-C", dir, "--no-optional-locks", "diff", "--numstat", base+"...")
+	r.linesAdded, r.linesRemoved = parseNumstat(numstatOut)
 
 	return r
 }
@@ -554,10 +589,10 @@ func renderStatusline(ctx RenderContext) string {
 
 	dirSection := prefix + dirDisplay
 
-	// Line churn next to dir
-	if ctx.Input.Cost.TotalLinesAdded != 0 || ctx.Input.Cost.TotalLinesRemoved != 0 {
-		churn := green + "+" + strconv.Itoa(ctx.Input.Cost.TotalLinesAdded) + reset +
-			"/" + red + "-" + strconv.Itoa(ctx.Input.Cost.TotalLinesRemoved) + reset
+	// Line churn next to dir (git-based)
+	if ctx.GitLinesAdded != 0 || ctx.GitLinesRemoved != 0 {
+		churn := green + "+" + strconv.Itoa(ctx.GitLinesAdded) + reset +
+			"/" + red + "-" + strconv.Itoa(ctx.GitLinesRemoved) + reset
 		dirSection += " " + churn
 	}
 
@@ -757,7 +792,9 @@ func main() {
 		Now:           time.Now(),
 		IssueInfo:     git.issue,
 		OpenIssues:    git.openIssues,
-		HasMoreIssues: git.hasMore,
+		HasMoreIssues:   git.hasMore,
+		GitLinesAdded:   git.linesAdded,
+		GitLinesRemoved: git.linesRemoved,
 	}
 	fmt.Println(renderStatusline(ctx))
 	writeStatsFile(projectDir, input)
