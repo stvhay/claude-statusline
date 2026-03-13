@@ -645,6 +645,32 @@ func hookMain(branch, projectDir string, w io.Writer) {
 	// Matching — no output needed
 }
 
+// writeStatsFile writes context and cost stats to <projectDir>/.claude/.statusline-stats.
+// Skips writing if context window data is not available.
+func writeStatsFile(projectDir string, input StatusInput) {
+	if projectDir == "" || input.ContextWindow.RemainingPercentage == nil {
+		return
+	}
+
+	claudeDir := filepath.Join(projectDir, ".claude")
+	os.MkdirAll(claudeDir, 0755)
+
+	used := 100 - int(*input.ContextWindow.RemainingPercentage)
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "context_percent=%d\n", used)
+
+	if input.Cost.TotalCostUSD != nil && *input.Cost.TotalCostUSD != 0 {
+		fmt.Fprintf(&buf, "cost_usd=%.2f\n", *input.Cost.TotalCostUSD)
+	}
+
+	statsPath := filepath.Join(claudeDir, ".statusline-stats")
+	tmpPath := statsPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(buf.String()), 0644); err != nil {
+		return
+	}
+	os.Rename(tmpPath, statsPath)
+}
+
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println("statusline " + version)
@@ -729,4 +755,5 @@ func main() {
 		HasMoreIssues: git.hasMore,
 	}
 	fmt.Println(renderStatusline(ctx))
+	writeStatsFile(projectDir, input)
 }

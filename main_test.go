@@ -834,6 +834,101 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+func TestWriteStatsFile(t *testing.T) {
+	tests := []struct {
+		name         string
+		remaining    *float64
+		costUSD      *float64
+		wantWritten  bool
+		wantContains []string
+		wantMissing  []string
+	}{
+		{
+			name:         "full data",
+			remaining:    floatPtr(78.0),
+			costUSD:      floatPtr(1.50),
+			wantWritten:  true,
+			wantContains: []string{"context_percent=22", "cost_usd=1.50"},
+		},
+		{
+			name:         "no cost",
+			remaining:    floatPtr(90.0),
+			costUSD:      nil,
+			wantWritten:  true,
+			wantContains: []string{"context_percent=10"},
+			wantMissing:  []string{"cost_usd"},
+		},
+		{
+			name:         "zero cost omitted",
+			remaining:    floatPtr(50.0),
+			costUSD:      floatPtr(0),
+			wantWritten:  true,
+			wantContains: []string{"context_percent=50"},
+			wantMissing:  []string{"cost_usd"},
+		},
+		{
+			name:        "no context data skips write",
+			remaining:   nil,
+			costUSD:     floatPtr(1.00),
+			wantWritten: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var input StatusInput
+			input.ContextWindow.RemainingPercentage = tt.remaining
+			input.Cost.TotalCostUSD = tt.costUSD
+
+			writeStatsFile(dir, input)
+
+			statsPath := filepath.Join(dir, ".claude", ".statusline-stats")
+			data, err := os.ReadFile(statsPath)
+
+			if !tt.wantWritten {
+				if err == nil {
+					t.Errorf("expected no file written, but file exists with: %s", string(data))
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected file written, got error: %v", err)
+			}
+
+			content := string(data)
+			for _, want := range tt.wantContains {
+				if !strings.Contains(content, want) {
+					t.Errorf("expected %q in file, got:\n%s", want, content)
+				}
+			}
+			for _, notWant := range tt.wantMissing {
+				if strings.Contains(content, notWant) {
+					t.Errorf("expected %q NOT in file, got:\n%s", notWant, content)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteStatsFileCreatesClaudeDir(t *testing.T) {
+	dir := t.TempDir()
+	var input StatusInput
+	input.ContextWindow.RemainingPercentage = floatPtr(80.0)
+
+	writeStatsFile(dir, input)
+
+	claudeDir := filepath.Join(dir, ".claude")
+	info, err := os.Stat(claudeDir)
+	if err != nil {
+		t.Fatalf("expected .claude dir to be created, got: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("expected .claude to be a directory")
+	}
+}
+
 // runHook is a test helper that calls hookMain with the given branch and project dir
 func runHook(branch, projectDir string) string {
 	var buf strings.Builder
